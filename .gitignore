@@ -1,0 +1,18 @@
+# Segredos e variáveis locais
+.streamlit/secrets.toml
+.env
+.env.*
+!.env.example
+
+# Banco SQLite local e backups
+/dados/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
