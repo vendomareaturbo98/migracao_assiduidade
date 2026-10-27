@@ -8,7 +8,7 @@ import pandas as pd
 import psycopg2
 import streamlit as st
 
-from db_postgres import conectar, consultar, executar, inicializar_banco
+from db_postgres import conectar, consultar, inicializar_banco
 
 
 # ======================================================
@@ -37,7 +37,7 @@ if not senha_configurada:
     st.title("📊 Sistema de Assiduidade")
     st.error(
         "A área administrativa está bloqueada. Configure ADMIN_PASSWORD "
-        "nos Secrets da hospedagem antes de utilizar ou publicar este app."
+        "nos Secrets da hospedagem antes de utilizar este aplicativo."
     )
     st.stop()
 
@@ -55,22 +55,23 @@ if not st.session_state.get("admin_autenticado", False):
     st.caption("Acesso exclusivo aos responsáveis pelo sistema.")
     st.stop()
 
-# Cria as tabelas caso ainda não existam; não apaga dados existentes.
+# Cria tabelas se necessário; não apaga dados existentes.
 inicializar_banco()
 
+
 # ======================================================
-# FUNÇÕES DE TEXTO E CONSULTA
+# FUNÇÕES AUXILIARES
 # ======================================================
+
+SITUACOES = ["Agendado", "Realizado", "Cancelado", "Remarcado"]
+
 
 def normalizar(valor):
     if pd.isna(valor):
         return ""
-
     texto = str(valor).strip().casefold()
     texto = unicodedata.normalize("NFKD", texto)
-    texto = "".join(
-        c for c in texto if not unicodedata.combining(c)
-    )
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
     return re.sub(r"\s+", " ", texto)
 
 
@@ -79,15 +80,11 @@ def cabecalho_normalizado(valor):
 
 
 def localizar_coluna(colunas, alternativas):
-    mapa = {
-        cabecalho_normalizado(c): c for c in colunas
-    }
-
+    mapa = {cabecalho_normalizado(c): c for c in colunas}
     for alternativa in alternativas:
         chave = cabecalho_normalizado(alternativa)
         if chave in mapa:
             return mapa[chave]
-
     return None
 
 
@@ -99,71 +96,48 @@ def listar_colaboradores(ativos=True):
     if ativos:
         sql += " WHERE ativo = 1"
     sql += " ORDER BY nome"
-
     return consultar(sql)
 
 
 def listar_treinamentos():
     return consultar("""
-        SELECT *
+        SELECT id, titulo, data, hora_inicio, hora_fim, carga_horaria,
+               publico, situacao, observacoes, criado_em
         FROM treinamentos
-        ORDER BY data DESC, hora_inicio DESC
+        ORDER BY data DESC, hora_inicio DESC, id DESC
     """)
 
 
-# ======================================================
-# IMPORTAÇÃO E TRATAMENTO DA PLANILHA
-# ======================================================
-
 def preparar_planilha(arquivo, aba=None):
     arquivo.seek(0)
-
     if arquivo.name.lower().endswith(".csv"):
         try:
-            df = pd.read_csv(
-                arquivo, dtype=str, sep=None, engine="python"
-            )
+            df = pd.read_csv(arquivo, dtype=str, sep=None, engine="python")
         except UnicodeDecodeError:
             arquivo.seek(0)
             df = pd.read_csv(
-                arquivo,
-                dtype=str,
-                sep=None,
-                engine="python",
-                encoding="latin-1",
+                arquivo, dtype=str, sep=None, engine="python",
+                encoding="latin-1"
             )
     else:
         df = pd.read_excel(
-            arquivo,
-            sheet_name=0 if aba is None else aba,
-            dtype=str,
+            arquivo, sheet_name=0 if aba is None else aba, dtype=str
         )
 
-    coluna_nome = localizar_coluna(
-        df.columns, ["Nome", "Nome completo"]
-    )
-    coluna_matricula = localizar_coluna(
-        df.columns, ["Matrícula", "Matricula"]
-    )
-    coluna_cargo = localizar_coluna(
-        df.columns, ["Cargo Efetivo", "Cargo"]
-    )
+    coluna_nome = localizar_coluna(df.columns, ["Nome", "Nome completo"])
+    coluna_matricula = localizar_coluna(df.columns, ["Matrícula", "Matricula"])
+    coluna_cargo = localizar_coluna(df.columns, ["Cargo Efetivo", "Cargo"])
 
     if not all([coluna_nome, coluna_matricula, coluna_cargo]):
         raise ValueError(
-            "A planilha precisa conter Nome, Matrícula e Cargo Efetivo."
+            "A planilha precisa conter as colunas Nome, Matrícula e Cargo Efetivo."
         )
 
     base = pd.DataFrame({
         "Nome": df[coluna_nome].fillna("").astype(str).str.strip(),
-        "Matrícula": (
-            df[coluna_matricula].fillna("").astype(str).str.strip()
-        ),
-        "Cargo Efetivo": (
-            df[coluna_cargo].fillna("").astype(str).str.strip()
-        ),
+        "Matrícula": df[coluna_matricula].fillna("").astype(str).str.strip(),
+        "Cargo Efetivo": df[coluna_cargo].fillna("").astype(str).str.strip(),
     })
-
     base = base[base["Nome"] != ""].copy()
     base["Chave"] = base["Nome"].apply(normalizar)
     base["RJU"] = base["Cargo Efetivo"].str.contains(
@@ -172,45 +146,41 @@ def preparar_planilha(arquivo, aba=None):
 
     excluidos = []
     ambiguos = []
-
-    # A regra RJU só exclui registros quando há alternativa não RJU.
     for chave, grupo in base.groupby("Chave", sort=False):
         if len(grupo) <= 1:
             continue
-
         rju = grupo[grupo["RJU"]]
         nao_rju = grupo[~grupo["RJU"]]
-
         if len(rju) and len(nao_rju):
             excluidos.extend(rju.index.tolist())
         else:
             ambiguos.extend(grupo.index.tolist())
 
     base["Resultado"] = "Importável"
-    base.loc[excluidos, "Resultado"] = (
-        "Excluído: RJU com alternativa não RJU"
-    )
+    base.loc[excluidos, "Resultado"] = "Excluído: RJU com alternativa não RJU"
     base.loc[ambiguos, "Resultado"] = "Revisar duplicidade"
 
-    # Apenas nomes únicos após aplicar a regra são importados.
     elegiveis = base[~base.index.isin(excluidos)].copy()
-
     contagem = elegiveis["Chave"].value_counts()
     chaves_ambiguas = set(contagem[contagem > 1].index)
-
     elegiveis.loc[
         elegiveis["Chave"].isin(chaves_ambiguas), "Resultado"
     ] = "Revisar duplicidade"
-
     importaveis = elegiveis[
         ~elegiveis["Chave"].isin(chaves_ambiguas)
     ].copy()
-
     return base, importaveis, excluidos, ambiguos
 
 
+def formatar_treinamento(linha):
+    return (
+        f'ID {int(linha["id"])} | {linha["titulo"]} | '
+        f'Data: {linha["data"]} | Status: {linha["situacao"]}'
+    )
+
+
 # ======================================================
-# INTERFACE
+# INTERFACE PRINCIPAL
 # ======================================================
 
 st.title("📊 Sistema de Assiduidade")
@@ -218,13 +188,7 @@ st.caption("Educação Continuada | Banco de dados PostgreSQL na nuvem")
 
 menu = st.sidebar.radio(
     "Navegação",
-    [
-        "Visão geral",
-        "Colaboradores",
-        "Treinamentos",
-        "Presenças",
-        "Relatórios",
-    ],
+    ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Relatórios"],
 )
 
 
@@ -235,12 +199,10 @@ menu = st.sidebar.radio(
 if menu == "Visão geral":
     colaboradores = listar_colaboradores()
     treinamentos = listar_treinamentos()
-
     total_colaboradores = len(colaboradores)
     total_treinamentos = len(treinamentos)
-
     realizados = (
-        len(treinamentos[treinamentos["situacao"] == "Realizado"])
+        int((treinamentos["situacao"] == "Realizado").sum())
         if not treinamentos.empty else 0
     )
 
@@ -250,20 +212,16 @@ if menu == "Visão geral":
     c3.metric("Treinamentos realizados", realizados)
 
     st.subheader("Treinamentos cadastrados")
-
     if treinamentos.empty:
         st.info("Ainda não há treinamentos cadastrados.")
     else:
         st.dataframe(
-            treinamentos[
-                ["titulo", "data", "situacao", "publico"]
-            ],
+            treinamentos[["titulo", "data", "situacao", "publico"]],
             hide_index=True,
             use_container_width=True,
         )
-
     st.info(
-        "Os dados ficam salvos no banco SQLite local, "
+        "Os dados ficam salvos no PostgreSQL do Supabase, na nuvem, "
         "mesmo após fechar o aplicativo."
     )
 
@@ -277,29 +235,23 @@ elif menu == "Colaboradores":
 
     with st.expander("Importar planilha Excel ou CSV", expanded=True):
         arquivo = st.file_uploader(
-            "Selecione a planilha",
-            type=["xlsx", "xls", "csv"],
+            "Selecione a planilha", type=["xlsx", "xls", "csv"],
             key="planilha_colaboradores",
         )
-
         aba = None
-
-        if arquivo and arquivo.name.lower().endswith(
-            (".xlsx", ".xls")
-        ):
+        if arquivo and arquivo.name.lower().endswith((".xlsx", ".xls")):
             try:
                 abas = pd.ExcelFile(arquivo).sheet_names
                 if len(abas) > 1:
                     aba = st.selectbox("Aba da planilha", abas)
             except Exception:
-                st.error("Não foi possível listar as abas.")
+                st.error("Não foi possível listar as abas da planilha.")
 
         if arquivo and st.button("Analisar planilha"):
             try:
-                original, importaveis, excluidos, ambiguos = (
-                    preparar_planilha(arquivo, aba)
+                original, importaveis, excluidos, ambiguos = preparar_planilha(
+                    arquivo, aba
                 )
-
                 st.session_state["importaveis"] = importaveis
                 st.session_state["excluidos"] = original[
                     original.index.isin(excluidos)
@@ -307,13 +259,11 @@ elif menu == "Colaboradores":
                 st.session_state["ambiguos"] = original[
                     original.index.isin(ambiguos)
                 ]
-
                 st.success(
-                    f"{len(importaveis)} registro(s) prontos para importar."
+                    f"{len(importaveis)} registro(s) pronto(s) para importar."
                 )
-
             except Exception as erro:
-                st.error(str(erro))
+                st.error(f"Não foi possível analisar a planilha: {erro}")
 
         if "importaveis" in st.session_state:
             st.write("Prévia dos registros importáveis")
@@ -324,9 +274,8 @@ elif menu == "Colaboradores":
                 hide_index=True,
                 use_container_width=True,
             )
-
             if not st.session_state["excluidos"].empty:
-                st.warning("Registros RJU que serão excluídos:")
+                st.warning("Registros RJU que serão excluídos pela regra de duplicidade:")
                 st.dataframe(
                     st.session_state["excluidos"][
                         ["Nome", "Matrícula", "Cargo Efetivo"]
@@ -334,10 +283,9 @@ elif menu == "Colaboradores":
                     hide_index=True,
                     use_container_width=True,
                 )
-
             if not st.session_state["ambiguos"].empty:
                 st.warning(
-                    "Existem duplicidades sem alternativa não RJU. "
+                    "Há nomes duplicados sem alternativa não RJU. "
                     "Esses registros não serão importados automaticamente."
                 )
                 st.dataframe(
@@ -352,32 +300,24 @@ elif menu == "Colaboradores":
                 base = st.session_state["importaveis"]
                 inseridos = 0
                 atualizados = 0
-
                 try:
                     with conectar() as conn:
                         for _, linha in base.iterrows():
                             chave = linha["Chave"]
                             existente = conn.execute(
-                                """
-                                SELECT id FROM colaboradores
-                                WHERE nome_chave = ?
-                                """,
+                                "SELECT id FROM colaboradores WHERE nome_chave = ?",
                                 (chave,),
                             ).fetchone()
-
                             if existente:
                                 conn.execute(
                                     """
                                     UPDATE colaboradores
-                                    SET nome = ?, matricula = ?,
-                                        cargo = ?, ativo = 1
+                                    SET nome = ?, matricula = ?, cargo = ?, ativo = 1
                                     WHERE nome_chave = ?
                                     """,
                                     (
-                                        linha["Nome"],
-                                        linha["Matrícula"],
-                                        linha["Cargo Efetivo"],
-                                        chave,
+                                        linha["Nome"], linha["Matrícula"],
+                                        linha["Cargo Efetivo"], chave,
                                     ),
                                 )
                                 atualizados += 1
@@ -389,60 +329,46 @@ elif menu == "Colaboradores":
                                     VALUES (?, ?, ?, ?)
                                     """,
                                     (
-                                        linha["Nome"],
-                                        chave,
-                                        linha["Matrícula"],
+                                        linha["Nome"], chave, linha["Matrícula"],
                                         linha["Cargo Efetivo"],
                                     ),
                                 )
                                 inseridos += 1
-
                     st.success(
                         f"Importação concluída: {inseridos} novos; "
                         f"{atualizados} atualizados."
                     )
-
-                    for chave in [
-                        "importaveis", "excluidos", "ambiguos"
-                    ]:
+                    for chave in ["importaveis", "excluidos", "ambiguos"]:
                         st.session_state.pop(chave, None)
-
-                except psycopg2.Error as erro:
-                    st.error(f"Erro no banco de dados: {erro}")
+                    st.rerun()
+                except Exception:
+                    st.error(
+                        "Não foi possível concluir a importação. "
+                        "Verifique os logs do aplicativo."
+                    )
 
     st.divider()
     st.subheader("Base salva no banco")
-
     colaboradores = listar_colaboradores(ativos=False)
-
     if colaboradores.empty:
         st.info("Nenhum colaborador cadastrado.")
     else:
         busca = st.text_input("Buscar por nome, matrícula ou cargo")
-
         if busca:
             mascara = (
-                colaboradores["nome"].str.contains(
+                colaboradores["nome"].fillna("").str.contains(
                     busca, case=False, na=False, regex=False
                 )
                 | colaboradores["matricula"].fillna("").str.contains(
                     busca, case=False, na=False, regex=False
                 )
-                | colaboradores["cargo"].str.contains(
+                | colaboradores["cargo"].fillna("").str.contains(
                     busca, case=False, na=False, regex=False
                 )
             )
             colaboradores = colaboradores[mascara]
-
-        st.dataframe(
-            colaboradores,
-            hide_index=True,
-            use_container_width=True,
-        )
-
-        csv = colaboradores.to_csv(
-            index=False, sep=";", encoding="utf-8-sig"
-        )
+        st.dataframe(colaboradores, hide_index=True, use_container_width=True)
+        csv = colaboradores.to_csv(index=False, sep=";", encoding="utf-8-sig")
         st.download_button(
             "Exportar colaboradores em CSV",
             data=csv,
@@ -452,20 +378,14 @@ elif menu == "Colaboradores":
 
 
 # ======================================================
-# TREINAMENTOS
+# TREINAMENTOS: CADASTRO, ALTERAÇÃO DE STATUS E DATA
 # ======================================================
 
 elif menu == "Treinamentos":
-    st.header("Cadastro de treinamentos")
-
+    st.header("Cadastro e gerenciamento de treinamentos")
     colaboradores = listar_colaboradores()
 
-    # --------------------------------------------------
-    # SELEÇÃO DO PÚBLICO-ALVO
-    # --------------------------------------------------
-
     st.subheader("1. Definir colaboradores elegíveis")
-
     publico = st.radio(
         "Como deseja selecionar os participantes?",
         [
@@ -476,336 +396,268 @@ elif menu == "Treinamentos":
     )
 
     ids = []
-    opcoes = {}
-    selecionados = []
-
     if publico == "Todos os colaboradores ativos":
-        ids = colaboradores["id"].astype(int).tolist()
-
-        st.info(
-            f"Serão incluídos {len(ids)} colaboradores "
-            "retornados pelo cadastro de colaboradores."
-        )
-
+        ids = colaboradores["id"].astype(int).tolist() if not colaboradores.empty else []
+        st.info(f"Serão incluídos {len(ids)} colaboradores ativos.")
+    elif colaboradores.empty:
+        st.warning("Não há colaboradores cadastrados.")
     else:
-        if colaboradores.empty:
-            st.warning("Não há colaboradores cadastrados.")
-        elif "cargo" not in colaboradores.columns:
-            st.error(
-                "Não foi encontrada a coluna 'cargo' no cadastro "
-                "de colaboradores. Verifique a estrutura da função "
-                "listar_colaboradores()."
-            )
+        cargos_disponiveis = sorted(
+            colaboradores["cargo"].fillna("").astype(str).str.strip()
+            .loc[lambda s: s != ""].unique().tolist()
+        )
+        cargos_selecionados = st.multiselect(
+            "Filtrar por cargo", options=cargos_disponiveis,
+            key="cargos_treinamento",
+        )
+        if cargos_selecionados:
+            filtrados = colaboradores[
+                colaboradores["cargo"].fillna("").astype(str).str.strip()
+                .isin(cargos_selecionados)
+            ].copy()
         else:
-            cargos_disponiveis = sorted(
-                colaboradores["cargo"]
-                .dropna()
-                .astype(str)
-                .str.strip()
-                .loc[lambda s: s != ""]
-                .unique()
-                .tolist()
+            filtrados = colaboradores.copy()
+
+        st.caption(f"{len(filtrados)} colaborador(es) encontrado(s).")
+        opcoes = {
+            (
+                f'{r["nome"]} | Cargo: {r["cargo"] or "não informado"} | '
+                f'Matrícula: {r["matricula"] or "não informada"}'
+            ): int(r["id"])
+            for _, r in filtrados.iterrows()
+        }
+        selecionar_todos = st.checkbox(
+            "Selecionar todos os colaboradores exibidos",
+            key="selecionar_todos_treinamento",
+        )
+        if selecionar_todos:
+            ids = list(opcoes.values())
+        else:
+            selecionados = st.multiselect(
+                "Escolha os colaboradores", options=list(opcoes.keys()),
+                key="colaboradores_especificos_treinamento",
             )
+            ids = [opcoes[nome] for nome in selecionados]
 
-            cargos_selecionados = st.multiselect(
-                "Filtrar por cargo",
-                options=cargos_disponiveis,
-                key="cargos_treinamento",
-                placeholder="Selecione um ou mais cargos",
-            )
-
-            if cargos_selecionados:
-                colaboradores_filtrados = colaboradores[
-                    colaboradores["cargo"]
-                    .fillna("")
-                    .astype(str)
-                    .str.strip()
-                    .isin(cargos_selecionados)
-                ].copy()
-            else:
-                colaboradores_filtrados = colaboradores.copy()
-
-            st.caption(
-                f"{len(colaboradores_filtrados)} colaborador(es) "
-                "encontrado(s) com o filtro atual."
-            )
-
-            selecionar_todos = st.checkbox(
-                "Selecionar todos os colaboradores exibidos",
-                key="selecionar_todos_treinamento",
-            )
-
-            opcoes = {
-                (
-                    f'{r["nome"]} | Cargo: {r["cargo"] or "não informado"} '
-                    f'| Matrícula: {r["matricula"] or "não informada"}'
-                ): int(r["id"])
-                for _, r in colaboradores_filtrados.iterrows()
-            }
-
-            if selecionar_todos:
-                selecionados = list(opcoes.keys())
-                ids = list(opcoes.values())
-                st.success(
-                    f"{len(ids)} colaborador(es) selecionado(s)."
-                )
-            else:
-                selecionados = st.multiselect(
-                    "Escolha os colaboradores",
-                    options=list(opcoes.keys()),
-                    key="colaboradores_especificos_treinamento",
-                    placeholder="Selecione os participantes",
-                )
-
-                ids = [opcoes[nome] for nome in selecionados]
-
-            st.caption(
-                f"Total de participantes selecionados: {len(ids)}"
-            )
+        st.caption(f"Total de participantes selecionados: {len(ids)}")
 
     st.divider()
-
-    # --------------------------------------------------
-    # FORMULÁRIO DE CADASTRO
-    # --------------------------------------------------
-
-    st.subheader("2. Informações do treinamento")
-
+    st.subheader("2. Informações do novo treinamento")
     with st.form("form_treinamento"):
         titulo = st.text_input("Nome do treinamento")
-
-        data_treinamento = st.date_input(
-            "Data",
-            value=date.today(),
-        )
-
+        data_treinamento = st.date_input("Data", value=date.today())
         col1, col2 = st.columns(2)
-
         with col1:
-            hora_inicio = st.time_input(
-                "Horário de início",
-                value=time(8, 0),
-            )
-
+            hora_inicio = st.time_input("Horário de início", value=time(8, 0))
         with col2:
-            hora_fim = st.time_input(
-                "Horário de término",
-                value=time(9, 0),
-            )
-
+            hora_fim = st.time_input("Horário de término", value=time(9, 0))
         carga = st.number_input(
-            "Carga horária (horas)",
-            min_value=0.25,
-            value=1.0,
-            step=0.25,
+            "Carga horária (horas)", min_value=0.25, value=1.0, step=0.25
         )
-
-        situacao = st.selectbox(
-            "Situação",
-            ["Agendado", "Realizado", "Cancelado"],
+        situacao_novo = st.selectbox(
+            "Situação inicial", SITUACOES, index=0,
+            help="Use Realizado somente quando o treinamento já tiver ocorrido.",
         )
-
         observacoes = st.text_area("Observações")
-
         salvar = st.form_submit_button("Salvar treinamento")
 
         if salvar:
             if not titulo.strip():
                 st.error("Informe o nome do treinamento.")
-
             elif hora_fim <= hora_inicio:
-                st.error(
-                    "O horário de término deve ser posterior ao início."
-                )
-
+                st.error("O horário de término deve ser posterior ao início.")
             elif not ids:
-                st.error(
-                    "Selecione pelo menos um colaborador elegível."
-                )
-
+                st.error("Selecione pelo menos um colaborador elegível.")
             else:
                 try:
                     with conectar() as conn:
                         cursor = conn.execute(
                             """
                             INSERT INTO treinamentos
-                            (
-                                titulo,
-                                data,
-                                hora_inicio,
-                                hora_fim,
-                                carga_horaria,
-                                publico,
-                                situacao,
-                                observacoes
-                            )
+                            (titulo, data, hora_inicio, hora_fim, carga_horaria,
+                             publico, situacao, observacoes)
                             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
-                                titulo.strip(),
-                                data_treinamento.isoformat(),
+                                titulo.strip(), data_treinamento.isoformat(),
                                 hora_inicio.strftime("%H:%M"),
-                                hora_fim.strftime("%H:%M"),
-                                carga,
-                                publico,
-                                situacao,
-                                observacoes.strip(),
+                                hora_fim.strftime("%H:%M"), float(carga),
+                                publico, situacao_novo, observacoes.strip(),
                             ),
                         )
-
                         treinamento_id = cursor.lastrowid
-
                         conn.executemany(
                             """
                             INSERT INTO elegibilidade
                             (treinamento_id, colaborador_id)
                             VALUES (?, ?)
                             """,
-                            [
-                                (treinamento_id, cid)
-                                for cid in ids
-                            ],
+                            [(treinamento_id, cid) for cid in ids],
                         )
-
-                    st.success("Treinamento cadastrado!")
+                    st.success("Treinamento cadastrado com sucesso.")
                     st.rerun()
+                except Exception:
+                    st.error(
+                        "Não foi possível salvar o treinamento. "
+                        "Verifique os logs do aplicativo."
+                    )
 
-                except psycopg2.Error as erro:
-                    st.error(f"Erro ao salvar: {erro}")
-
-    # --------------------------------------------------
-    # LISTAGEM DOS TREINAMENTOS
-    # --------------------------------------------------
-
+    # Listagem e edição de treinamentos existentes.
     st.divider()
-    st.subheader("Treinamentos cadastrados")
-
-    mensagem_exclusao = st.session_state.pop(
-        "mensagem_exclusao_treinamento", None
-    )
-
-    if mensagem_exclusao:
-        st.success(mensagem_exclusao)
-
+    st.subheader("3. Treinamentos cadastrados")
     treinamentos = listar_treinamentos()
-
     if treinamentos.empty:
         st.info("Nenhum treinamento cadastrado.")
     else:
-        colunas_exibicao = [
-            "id",
-            "titulo",
-            "data",
-            "hora_inicio",
-            "hora_fim",
-            "carga_horaria",
-            "publico",
-            "situacao",
-        ]
-
         st.dataframe(
-            treinamentos[colunas_exibicao],
+            treinamentos[
+                ["id", "titulo", "data", "hora_inicio", "hora_fim",
+                 "carga_horaria", "publico", "situacao"]
+            ],
             hide_index=True,
             use_container_width=True,
         )
 
-    # --------------------------------------------------
-    # EXCLUSÃO DE TREINAMENTOS AGENDADOS
-    # --------------------------------------------------
-
-    st.divider()
-    st.subheader("Excluir treinamento agendado")
-
-    agendados = treinamentos[
-        treinamentos["situacao"] == "Agendado"
-    ].copy()
-
-    if agendados.empty:
-        st.info(
-            "Não há treinamentos agendados disponíveis para exclusão."
-        )
-    else:
-        opcoes_exclusao = {
-            (
-                f'ID {int(r["id"])} | {r["titulo"]} '
-                f'| Data: {r["data"]}'
-            ): int(r["id"])
-            for _, r in agendados.iterrows()
+        st.markdown("### Alterar status ou remarcar treinamento")
+        mapa = {
+            formatar_treinamento(r): int(r["id"])
+            for _, r in treinamentos.iterrows()
         }
-
-        treinamento_excluir = st.selectbox(
-            "Selecione o treinamento que deseja excluir",
-            options=list(opcoes_exclusao.keys()),
-            key="treinamento_excluir",
+        escolha = st.selectbox(
+            "Selecione o treinamento que deseja alterar",
+            options=list(mapa.keys()),
+            key="editar_treinamento_escolha",
         )
+        tid_editar = mapa[escolha]
+        atual = treinamentos[treinamentos["id"] == tid_editar].iloc[0]
 
-        confirmar_exclusao = st.checkbox(
-            "Confirmo que desejo excluir este treinamento agendado.",
-            key="confirmar_exclusao_treinamento",
+        status_atual = str(atual["situacao"])
+        data_atual_str = str(atual["data"])[:10]
+        try:
+            data_atual = date.fromisoformat(data_atual_str)
+        except ValueError:
+            data_atual = date.today()
+
+        st.caption(
+            f"Status atual: **{status_atual}** | "
+            f"Data atual: **{data_atual_str}**"
         )
+        with st.form(f"form_editar_treinamento_{tid_editar}"):
+            novo_status = st.selectbox(
+                "Novo status",
+                SITUACOES,
+                index=SITUACOES.index(status_atual)
+                if status_atual in SITUACOES else 0,
+            )
+            nova_data = st.date_input("Data do treinamento", value=data_atual)
+            nova_observacao = st.text_area(
+                "Observações",
+                value=str(atual["observacoes"] or ""),
+                key=f"observacoes_treinamento_{tid_editar}",
+            )
+            salvar_alteracao = st.form_submit_button("Salvar alterações")
 
-        if st.button(
-            "Excluir treinamento",
-            type="secondary",
-            disabled=not confirmar_exclusao,
-            key="botao_excluir_treinamento",
-        ):
-            id_excluir = opcoes_exclusao[treinamento_excluir]
-
-            try:
-                with conectar() as conn:
-                    registro = conn.execute(
-                        """
-                        SELECT situacao
-                        FROM treinamentos
-                        WHERE id = ?
-                        """,
-                        (id_excluir,),
-                    ).fetchone()
-
-                    if registro is None:
-                        st.error("O treinamento não foi encontrado.")
-
-                    elif registro["situacao"] != "Agendado":
-                        st.error(
-                            "Só é permitido excluir treinamentos "
-                            "com situação 'Agendado'."
-                        )
-
-                    else:
-                        conn.execute(
-                            """
-                            DELETE FROM elegibilidade
-                            WHERE treinamento_id = ?
-                            """,
-                            (id_excluir,),
-                        )
-
+            if salvar_alteracao:
+                if novo_status == "Remarcado" and nova_data == data_atual:
+                    st.warning(
+                        "O status será salvo como Remarcado, mas a data não mudou. "
+                        "Se houve mudança de data, informe a nova data."
+                    )
+                if (
+                    status_atual == "Realizado"
+                    and novo_status in ("Agendado", "Remarcado")
+                ):
+                    st.warning(
+                        "Você está reabrindo um treinamento já marcado como realizado. "
+                        "Confira se essa alteração é realmente necessária."
+                    )
+                try:
+                    with conectar() as conn:
                         resultado = conn.execute(
                             """
-                            DELETE FROM treinamentos
+                            UPDATE treinamentos
+                            SET situacao = ?, data = ?, observacoes = ?
                             WHERE id = ?
-                              AND situacao = 'Agendado'
                             """,
-                            (id_excluir,),
+                            (
+                                novo_status, nova_data.isoformat(),
+                                nova_observacao.strip(), tid_editar,
+                            ),
                         )
+                    if resultado.rowcount == 1:
+                        st.success("Treinamento atualizado com sucesso.")
+                        st.rerun()
+                    else:
+                        st.error("O treinamento não foi encontrado para atualização.")
+                except Exception:
+                    st.error(
+                        "Não foi possível atualizar o treinamento. "
+                        "Verifique os logs do aplicativo."
+                    )
 
-                        if resultado.rowcount == 1:
-                            st.session_state[
-                                "mensagem_exclusao_treinamento"
-                            ] = "Treinamento excluído com sucesso!"
-                        else:
+    # Mantém exclusão restrita aos agendados, como na versão anterior.
+    st.divider()
+    st.subheader("4. Excluir treinamento agendado")
+    if treinamentos.empty:
+        st.info("Não há treinamentos para excluir.")
+    else:
+        agendados = treinamentos[treinamentos["situacao"] == "Agendado"].copy()
+        if agendados.empty:
+            st.info("Não há treinamentos agendados disponíveis para exclusão.")
+        else:
+            opcoes_exclusao = {
+                formatar_treinamento(r): int(r["id"])
+                for _, r in agendados.iterrows()
+            }
+            escolha_exclusao = st.selectbox(
+                "Selecione o treinamento agendado",
+                options=list(opcoes_exclusao.keys()),
+                key="treinamento_excluir",
+            )
+            confirmar_exclusao = st.checkbox(
+                "Confirmo que desejo excluir este treinamento agendado.",
+                key="confirmar_exclusao_treinamento",
+            )
+            if st.button(
+                "Excluir treinamento",
+                disabled=not confirmar_exclusao,
+                key="botao_excluir_treinamento",
+            ):
+                id_excluir = opcoes_exclusao[escolha_exclusao]
+                try:
+                    with conectar() as conn:
+                        registro = conn.execute(
+                            "SELECT situacao FROM treinamentos WHERE id = ?",
+                            (id_excluir,),
+                        ).fetchone()
+                        if registro is None:
+                            st.error("O treinamento não foi encontrado.")
+                        elif registro["situacao"] != "Agendado":
                             st.error(
-                                "Nenhum treinamento foi excluído."
+                                "Só é permitido excluir treinamentos com status Agendado."
                             )
-
-                if st.session_state.get(
-                    "mensagem_exclusao_treinamento"
-                ):
-                    st.rerun()
-
-            except psycopg2.Error as erro:
-                st.error(f"Erro ao excluir treinamento: {erro}")
+                        else:
+                            conn.execute(
+                                "DELETE FROM elegibilidade WHERE treinamento_id = ?",
+                                (id_excluir,),
+                            )
+                            resultado = conn.execute(
+                                """
+                                DELETE FROM treinamentos
+                                WHERE id = ? AND situacao = 'Agendado'
+                                """,
+                                (id_excluir,),
+                            )
+                            if resultado.rowcount == 1:
+                                st.success("Treinamento excluído com sucesso.")
+                                st.rerun()
+                            else:
+                                st.error("Nenhum treinamento foi excluído.")
+                except Exception:
+                    st.error(
+                        "Não foi possível excluir o treinamento. "
+                        "Verifique os logs do aplicativo."
+                    )
 
 
 # ======================================================
@@ -814,31 +666,21 @@ elif menu == "Treinamentos":
 
 elif menu == "Presenças":
     st.header("Registro de presenças")
-
     treinamentos = listar_treinamentos()
-    colaboradores = listar_colaboradores()
-
     if treinamentos.empty:
         st.info("Cadastre um treinamento antes de registrar presenças.")
         st.stop()
 
     mapa_treinamentos = {
         (
-            f'{r["data"]} | {r["titulo"]} '
-            f'| {r["hora_inicio"]} | ID {r["id"]}'
+            f'{r["data"]} | {r["titulo"]} | {r["hora_inicio"]} '
+            f'| Status: {r["situacao"]} | ID {r["id"]}'
         ): int(r["id"])
         for _, r in treinamentos.iterrows()
     }
-
-    escolha = st.selectbox(
-        "Selecione o treinamento",
-        list(mapa_treinamentos.keys()),
-    )
+    escolha = st.selectbox("Selecione o treinamento", list(mapa_treinamentos.keys()))
     tid = mapa_treinamentos[escolha]
-
-    treinamento = treinamentos[
-        treinamentos["id"] == tid
-    ].iloc[0]
+    treinamento = treinamentos[treinamentos["id"] == tid].iloc[0]
 
     elegiveis = consultar(
         """
@@ -850,17 +692,19 @@ elif menu == "Presenças":
         """,
         (tid,),
     )
-
     if elegiveis.empty:
-        st.warning("Este treinamento não tem público elegível cadastrado.")
+        st.warning("Este treinamento não tem colaboradores elegíveis ativos.")
         st.stop()
-
     if treinamento["situacao"] == "Cancelado":
-        st.warning("Este treinamento está cancelado.")
+        st.warning("Este treinamento está cancelado. Não é possível registrar presenças.")
         st.stop()
+    if treinamento["situacao"] == "Remarcado":
+        st.warning(
+            "Este treinamento está marcado como Remarcado. "
+            "Confira a nova data antes de registrar presenças."
+        )
 
-    ids = elegiveis["id"].astype(int).tolist()
-
+    ids_elegiveis = elegiveis["id"].astype(int).tolist()
     atuais = consultar(
         """
         SELECT colaborador_id, presente
@@ -869,80 +713,57 @@ elif menu == "Presenças":
         """,
         (tid,),
     )
-
     presentes_atuais = set(
-        atuais.loc[
-            atuais["presente"] == 1, "colaborador_id"
-        ].astype(int).tolist()
+        atuais.loc[atuais["presente"] == 1, "colaborador_id"].astype(int).tolist()
     )
-
     nomes = {
         int(r["id"]): (
-            f'{r["nome"]} | Matrícula: '
-            f'{r["matricula"] or "não informada"}'
+            f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"}'
         )
         for _, r in elegiveis.iterrows()
     }
-
     selecionados_atuais = [
-        nomes[cid] for cid in ids if cid in presentes_atuais
+        nomes[cid] for cid in ids_elegiveis if cid in presentes_atuais
     ]
 
     with st.form("form_presencas"):
         presentes = st.multiselect(
             "Selecione quem esteve presente",
-            options=[nomes[cid] for cid in ids],
+            options=[nomes[cid] for cid in ids_elegiveis],
             default=selecionados_atuais,
         )
-
-        salvar_presencas = st.form_submit_button(
-            "Salvar presenças"
-        )
-
+        salvar_presencas = st.form_submit_button("Salvar presenças")
         if salvar_presencas:
-            if treinamento["situacao"] == "Cancelado":
+            presentes_ids = {
+                cid for cid in ids_elegiveis if nomes[cid] in presentes
+            }
+            try:
+                with conectar() as conn:
+                    for cid in ids_elegiveis:
+                        conn.execute(
+                            """
+                            INSERT INTO presencas
+                            (treinamento_id, colaborador_id, presente)
+                            VALUES (?, ?, ?)
+                            ON CONFLICT(treinamento_id, colaborador_id)
+                            DO UPDATE SET
+                                presente = excluded.presente,
+                                atualizado_em = CURRENT_TIMESTAMP::text
+                            """,
+                            (tid, cid, 1 if cid in presentes_ids else 0),
+                        )
+                st.success("Presenças salvas com sucesso.")
+                st.rerun()
+            except Exception:
                 st.error(
-                    "Não é possível registrar presença em treinamento cancelado."
+                    "Não foi possível salvar as presenças. "
+                    "Verifique os logs do aplicativo."
                 )
-            else:
-                presentes_ids = {
-                    cid for cid in ids
-                    if nomes[cid] in presentes
-                }
-
-                try:
-                    with conectar() as conn:
-                        for cid in ids:
-                            conn.execute(
-                                """
-                                INSERT INTO presencas
-                                (treinamento_id, colaborador_id, presente)
-                                VALUES (?, ?, ?)
-                                ON CONFLICT(treinamento_id, colaborador_id)
-                                DO UPDATE SET
-                                    presente = excluded.presente,
-                                    atualizado_em = CURRENT_TIMESTAMP::text
-                                """,
-                                (
-                                    tid,
-                                    cid,
-                                    1 if cid in presentes_ids else 0,
-                                ),
-                            )
-
-                    st.success(
-                        "Presenças salvas. Os demais elegíveis estão "
-                        "registrados como não presentes."
-                    )
-                    st.rerun()
-
-                except psycopg2.Error as erro:
-                    st.error(f"Erro ao salvar presenças: {erro}")
 
     if treinamento["situacao"] != "Realizado":
         st.info(
-            "Para contabilizar ausências, marque o treinamento como "
-            "'Realizado' na seção Treinamentos depois que ele terminar."
+            "Para contabilizar ausências, altere o status para Realizado "
+            "na aba Treinamentos depois que o treinamento terminar."
         )
 
 
@@ -952,7 +773,6 @@ elif menu == "Presenças":
 
 elif menu == "Relatórios":
     st.header("Relatórios de assiduidade")
-
     resumo = consultar("""
         SELECT
             t.id AS treinamento_id,
@@ -964,10 +784,8 @@ elif menu == "Relatórios":
             c.cargo,
             p.presente
         FROM elegibilidade e
-        JOIN treinamentos t
-            ON t.id = e.treinamento_id
-        JOIN colaboradores c
-            ON c.id = e.colaborador_id
+        JOIN treinamentos t ON t.id = e.treinamento_id
+        JOIN colaboradores c ON c.id = e.colaborador_id
         LEFT JOIN presencas p
             ON p.treinamento_id = t.id
             AND p.colaborador_id = c.id
@@ -979,23 +797,25 @@ elif menu == "Relatórios":
         st.info("Ainda não há dados para relatório.")
     else:
         hoje = date.today().isoformat()
-
         resumo["resultado"] = "Pendente"
-        resumo.loc[
-            resumo["situacao"] == "Cancelado", "resultado"
-        ] = "Cancelado"
 
-        resumo.loc[
+        resumo.loc[resumo["situacao"] == "Cancelado", "resultado"] = "Cancelado"
+
+        realizado_e_data_passada = (
             (resumo["situacao"] == "Realizado")
-            & (resumo["data"] <= hoje)
-            & (resumo["presente"] == 1),
+            & (resumo["data"].astype(str) <= hoje)
+        )
+        resumo.loc[
+            realizado_e_data_passada & (resumo["presente"] == 1),
             "resultado",
         ] = "Presente"
 
+        # Se o treinamento foi realizado e não existe confirmação (NULL)
+        # ou está explicitamente marcado como não presente (0), é ausência.
         resumo.loc[
-            (resumo["situacao"] == "Realizado")
-            & (resumo["data"] <= hoje)
-            & (resumo["presente"] == 0),
+            realizado_e_data_passada & (
+                resumo["presente"].isna() | (resumo["presente"] == 0)
+            ),
             "resultado",
         ] = "Ausente"
 
@@ -1005,49 +825,42 @@ elif menu == "Relatórios":
             "resultado",
         ] = "Pendente"
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric(
-            "Presenças",
-            int((resumo["resultado"] == "Presente").sum()),
-        )
-        c2.metric(
-            "Ausências",
-            int((resumo["resultado"] == "Ausente").sum()),
-        )
-        c3.metric(
-            "Pendências",
-            int((resumo["resultado"] == "Pendente").sum()),
-        )
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Presenças", int((resumo["resultado"] == "Presente").sum()))
+        c2.metric("Ausências", int((resumo["resultado"] == "Ausente").sum()))
+        c3.metric("Pendências", int((resumo["resultado"] == "Pendente").sum()))
+        c4.metric("Cancelados", int((resumo["resultado"] == "Cancelado").sum()))
 
-        st.caption(
-            "A ausência é contabilizada apenas para treinamentos "
-            "marcados como Realizado. Treinamentos cancelados são excluídos."
-        )
-
-        filtro = st.multiselect(
-            "Filtrar resultado",
-            ["Presente", "Ausente", "Pendente", "Cancelado"],
+        st.subheader("Detalhamento")
+        filtro_resultado = st.multiselect(
+            "Filtrar por resultado",
+            options=["Presente", "Ausente", "Pendente", "Cancelado"],
             default=["Presente", "Ausente", "Pendente", "Cancelado"],
         )
-
-        filtrado = resumo[resumo["resultado"].isin(filtro)]
-
+        filtro_treinamento = st.text_input("Filtrar por nome do treinamento")
+        exibicao = resumo[resumo["resultado"].isin(filtro_resultado)].copy()
+        if filtro_treinamento:
+            exibicao = exibicao[
+                exibicao["treinamento"].fillna("").str.contains(
+                    filtro_treinamento, case=False, na=False, regex=False
+                )
+            ]
+        colunas_relatorio = [
+            "treinamento_id", "treinamento", "data", "situacao",
+            "nome", "matricula", "cargo", "resultado",
+        ]
         st.dataframe(
-            filtrado[
-                [
-                    "treinamento", "data", "nome",
-                    "matricula", "cargo", "resultado"
-                ]
-            ],
+            exibicao[colunas_relatorio],
             hide_index=True,
             use_container_width=True,
         )
 
+        csv = exibicao[colunas_relatorio].to_csv(
+            index=False, sep=";", encoding="utf-8-sig"
+        )
         st.download_button(
-            "Baixar relatório em CSV",
-            data=filtrado.to_csv(
-                index=False, sep=";", encoding="utf-8-sig"
-            ),
+            "Exportar relatório em CSV",
+            data=csv,
             file_name="relatorio_assiduidade.csv",
             mime="text/csv",
         )
