@@ -5,9 +5,22 @@ import unicodedata
 from datetime import date, time
 
 import pandas as pd
-import psycopg2
+import plotly.express as px
 import streamlit as st
 
+from dashboard_utils import (
+    SITUACOES,
+    aplicar_filtros,
+    calcular_metricas,
+    classificar_resultados,
+    desempenho_por_treinamento,
+    evolucao_mensal,
+    resumo_por_cargo,
+)
+
+# A versão publicada usa exclusivamente o PostgreSQL do Supabase.
+# O banco SQLite de testes não deve ser selecionado por variável de ambiente
+# nesta versão de produção.
 from db_postgres import conectar, consultar, inicializar_banco
 
 
@@ -63,9 +76,6 @@ inicializar_banco()
 # FUNÇÕES AUXILIARES
 # ======================================================
 
-SITUACOES = ["Agendado", "Realizado", "Cancelado", "Remarcado"]
-
-
 def normalizar(valor):
     if pd.isna(valor):
         return ""
@@ -106,6 +116,275 @@ def listar_treinamentos():
         FROM treinamentos
         ORDER BY data DESC, hora_inicio DESC, id DESC
     """)
+
+
+def carregar_participacoes_dashboard():
+    """Carrega cada elegibilidade com seu estado de presença para o painel."""
+    return consultar("""
+        SELECT
+            t.id AS treinamento_id,
+            t.titulo AS treinamento,
+            t.data,
+            t.situacao,
+            c.id AS colaborador_id,
+            c.nome,
+            c.matricula,
+            c.cargo,
+            p.presente
+        FROM elegibilidade e
+        JOIN treinamentos t ON t.id = e.treinamento_id
+        JOIN colaboradores c ON c.id = e.colaborador_id
+        LEFT JOIN presencas p
+            ON p.treinamento_id = t.id
+            AND p.colaborador_id = c.id
+        WHERE c.ativo = 1
+        ORDER BY t.data, t.hora_inicio, t.titulo, c.nome
+    """)
+
+
+def exibir_grafico(figura, descricao):
+    """Centraliza a configuração de acessibilidade e dos controles dos gráficos."""
+    figura.update_layout(
+        margin=dict(l=12, r=12, t=36, b=12),
+        legend_title_text="",
+        hoverlabel=dict(namelength=-1),
+    )
+    # O parâmetro "alt" não é passado para manter compatibilidade com
+    # versões do Streamlit a partir da faixa 1.40 definida em requirements.txt.
+    st.plotly_chart(
+        figura,
+        use_container_width=True,
+        config={"displaylogo": False, "scrollZoom": False},
+    )
+
+
+def exibir_visao_geral():
+    """Mostra o painel interativo de acompanhamento da educação continuada."""
+    colaboradores = listar_colaboradores()
+    treinamentos = listar_treinamentos()
+    participacoes = classificar_resultados(carregar_participacoes_dashboard())
+
+    st.subheader("Painel de acompanhamento")
+    st.caption(
+        "Use os filtros para explorar a cobertura dos treinamentos, a presença "
+        "e os pontos que precisam de acompanhamento."
+    )
+
+    datas = pd.to_datetime(treinamentos["data"], errors="coerce").dropna()
+    if datas.empty:
+        inicio_padrao = fim_padrao = date.today()
+    else:
+        inicio_padrao = datas.min().date()
+        fim_padrao = datas.max().date()
+
+    cargos_disponiveis = sorted(
+        colaboradores["cargo"].fillna("").loc[lambda serie: serie != ""].unique()
+    ) if not colaboradores.empty else []
+
+    with st.expander("Filtros do painel", expanded=True):
+        filtro_col1, filtro_col2, filtro_col3 = st.columns(3)
+        with filtro_col1:
+            periodo = st.date_input(
+                "Período dos treinamentos",
+                value=(inicio_padrao, fim_padrao),
+                key="dashboard_periodo",
+            )
+        with filtro_col2:
+            cargos = st.multiselect(
+                "Cargos", options=cargos_disponiveis, key="dashboard_cargos"
+            )
+        with filtro_col3:
+            situacoes = st.multiselect(
+                "Situações", options=SITUACOES, default=SITUACOES,
+                key="dashboard_situacoes",
+            )
+
+    if isinstance(periodo, tuple) and len(periodo) == 2:
+        data_inicial, data_final = periodo
+    else:
+        data_inicial = data_final = periodo
+    if data_inicial > data_final:
+        st.error("A data inicial do filtro deve ser anterior ou igual à data final.")
+        return
+
+    participacoes_filtradas = aplicar_filtros(
+        participacoes, data_inicial, data_final, cargos, situacoes
+    )
+    if treinamentos.empty:
+        treinamentos_filtrados = treinamentos.copy()
+    else:
+        dados_treinamentos = treinamentos.copy()
+        dados_treinamentos["data"] = pd.to_datetime(
+            dados_treinamentos["data"], errors="coerce"
+        )
+        mascara_periodo = dados_treinamentos["data"].dt.date.between(
+            data_inicial, data_final
+        )
+        treinamentos_filtrados = dados_treinamentos.loc[
+            mascara_periodo & dados_treinamentos["situacao"].isin(situacoes)
+        ].copy()
+
+    metricas = calcular_metricas(
+        colaboradores, treinamentos_filtrados, participacoes_filtradas, cargos
+    )
+    indicador1, indicador2, indicador3, indicador4, indicador5 = st.columns(5)
+    indicador1.metric("Colaboradores ativos", metricas["colaboradores_ativos"])
+    indicador2.metric("Treinamentos", metricas["treinamentos"])
+    indicador3.metric("Realizados", metricas["treinamentos_realizados"])
+    indicador4.metric("Taxa de presença", f'{metricas["taxa_presenca"]:.1f}%')
+    indicador5.metric("Ausências", metricas["ausencias"])
+
+    aba_panorama, aba_assiduidade, aba_agenda = st.tabs(
+        ["Panorama", "Assiduidade", "Agenda e pendências"]
+    )
+
+    with aba_panorama:
+        if treinamentos_filtrados.empty:
+            st.info("Não há treinamentos para os filtros selecionados.")
+        else:
+            grafico1, grafico2 = st.columns(2)
+            with grafico1:
+                por_situacao = (
+                    treinamentos_filtrados["situacao"].value_counts()
+                    .rename_axis("situacao").reset_index(name="quantidade")
+                )
+                figura_situacao = px.pie(
+                    por_situacao,
+                    names="situacao",
+                    values="quantidade",
+                    hole=0.55,
+                    title="Situação dos treinamentos",
+                    color="situacao",
+                    color_discrete_map={
+                        "Realizado": "#2E8B57", "Agendado": "#1F77B4",
+                        "Remarcado": "#F39C12", "Cancelado": "#C0392B",
+                    },
+                )
+                exibir_grafico(
+                    figura_situacao,
+                    "Distribuição dos treinamentos por situação.",
+                )
+            with grafico2:
+                por_resultado = (
+                    participacoes_filtradas["resultado"].value_counts()
+                    .reindex(["Presente", "Ausente", "Pendente", "Cancelado"], fill_value=0)
+                    .rename_axis("resultado").reset_index(name="quantidade")
+                )
+                figura_resultado = px.bar(
+                    por_resultado,
+                    x="resultado",
+                    y="quantidade",
+                    color="resultado",
+                    text="quantidade",
+                    title="Resultado das participações",
+                    color_discrete_map={
+                        "Presente": "#2E8B57", "Ausente": "#C0392B",
+                        "Pendente": "#1F77B4", "Cancelado": "#7F8C8D",
+                    },
+                )
+                figura_resultado.update_layout(showlegend=False, yaxis_title="Participações")
+                exibir_grafico(
+                    figura_resultado,
+                    "Quantidade de presenças, ausências, pendências e cancelamentos.",
+                )
+
+        st.subheader("Resumo dos indicadores filtrados")
+        st.dataframe(
+            pd.DataFrame([{
+                "Presenças": metricas["presencas"],
+                "Ausências": metricas["ausencias"],
+                "Pendências": metricas["pendencias"],
+                "Taxa de presença (%)": metricas["taxa_presenca"],
+            }]),
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    with aba_assiduidade:
+        if participacoes_filtradas.empty:
+            st.info("Ainda não há participantes elegíveis para os filtros selecionados.")
+        else:
+            evolucao = evolucao_mensal(participacoes_filtradas)
+            por_cargo = resumo_por_cargo(participacoes_filtradas)
+            grafico3, grafico4 = st.columns(2)
+            with grafico3:
+                if evolucao.empty:
+                    st.info("Não há treinamentos concluídos no período para calcular a taxa mensal.")
+                else:
+                    figura_evolucao = px.line(
+                        evolucao, x="mes", y="taxa_presenca", markers=True,
+                        hover_data=["participacoes"],
+                        title="Evolução mensal da presença",
+                    )
+                    figura_evolucao.update_layout(
+                        yaxis_title="Taxa de presença (%)", xaxis_title="Mês"
+                    )
+                    figura_evolucao.update_yaxes(range=[0, 100])
+                    exibir_grafico(
+                        figura_evolucao,
+                        "Taxa de presença por mês e quantidade de participações concluídas.",
+                    )
+            with grafico4:
+                if por_cargo.empty:
+                    st.info("Não há presenças ou ausências concluídas para comparar por cargo.")
+                else:
+                    figura_cargo = px.bar(
+                        por_cargo, x="cargo", y="quantidade", color="resultado",
+                        barmode="group", text="quantidade",
+                        title="Presença por cargo",
+                        color_discrete_map={"Presente": "#2E8B57", "Ausente": "#C0392B"},
+                    )
+                    figura_cargo.update_layout(xaxis_title="Cargo", yaxis_title="Participações")
+                    exibir_grafico(
+                        figura_cargo,
+                        "Comparação de presenças e ausências por cargo.",
+                    )
+
+            st.subheader("Desempenho por treinamento")
+            desempenho = desempenho_por_treinamento(participacoes_filtradas)
+            if desempenho.empty:
+                st.info("O desempenho será exibido após registrar as presenças de um treinamento realizado.")
+            else:
+                st.dataframe(
+                    desempenho.rename(columns={
+                        "treinamento": "Treinamento", "data": "Data",
+                        "presentes": "Presentes", "ausentes": "Ausentes",
+                        "taxa_presenca": "Taxa de presença (%)",
+                    }),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+    with aba_agenda:
+        st.subheader("Treinamentos no período")
+        if treinamentos_filtrados.empty:
+            st.info("Não há treinamentos no período selecionado.")
+        else:
+            agenda = treinamentos_filtrados[
+                ["titulo", "data", "hora_inicio", "hora_fim", "carga_horaria", "situacao"]
+            ].rename(columns={
+                "titulo": "Treinamento", "data": "Data", "hora_inicio": "Início",
+                "hora_fim": "Fim", "carga_horaria": "Carga horária", "situacao": "Situação",
+            })
+            st.dataframe(agenda, hide_index=True, use_container_width=True)
+
+        st.subheader("Ausências que requerem acompanhamento")
+        ausentes = participacoes_filtradas[
+            participacoes_filtradas["resultado"] == "Ausente"
+        ]
+        if ausentes.empty:
+            st.success("Não há ausências nos filtros selecionados.")
+        else:
+            st.dataframe(
+                ausentes[["nome", "matricula", "cargo", "treinamento", "data"]].rename(
+                    columns={
+                        "nome": "Colaborador", "matricula": "Matrícula", "cargo": "Cargo",
+                        "treinamento": "Treinamento", "data": "Data",
+                    }
+                ),
+                hide_index=True,
+                use_container_width=True,
+            )
 
 
 def preparar_planilha(arquivo, aba=None):
@@ -197,29 +476,7 @@ menu = st.sidebar.radio(
 # ======================================================
 
 if menu == "Visão geral":
-    colaboradores = listar_colaboradores()
-    treinamentos = listar_treinamentos()
-    total_colaboradores = len(colaboradores)
-    total_treinamentos = len(treinamentos)
-    realizados = (
-        int((treinamentos["situacao"] == "Realizado").sum())
-        if not treinamentos.empty else 0
-    )
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Colaboradores ativos", total_colaboradores)
-    c2.metric("Treinamentos cadastrados", total_treinamentos)
-    c3.metric("Treinamentos realizados", realizados)
-
-    st.subheader("Treinamentos cadastrados")
-    if treinamentos.empty:
-        st.info("Ainda não há treinamentos cadastrados.")
-    else:
-        st.dataframe(
-            treinamentos[["titulo", "data", "situacao", "publico"]],
-            hide_index=True,
-            use_container_width=True,
-        )
+    exibir_visao_geral()
     st.info(
         "Os dados ficam salvos no PostgreSQL do Supabase, na nuvem, "
         "mesmo após fechar o aplicativo."
