@@ -64,6 +64,68 @@ st.markdown(
 
     .stApp {
         background: var(--canvas);
+        color: var(--ink);
+    }
+
+    /* Força uma superfície clara e alto contraste em controles e filtros. */
+    [data-baseweb="select"] > div,
+    [data-baseweb="input"] > div,
+    [data-baseweb="textarea"] > div,
+    [data-testid="stDateInput"] > div,
+    [data-testid="stTimeInput"] > div,
+    [data-testid="stNumberInput"] > div {
+        background-color: #FFFFFF !important;
+        border-color: #CBD5E1 !important;
+        color: #1B2B3D !important;
+    }
+
+    [data-baseweb="select"] input,
+    [data-baseweb="input"] input,
+    [data-baseweb="textarea"] textarea,
+    [data-testid="stDateInput"] input,
+    [data-testid="stTimeInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea {
+        color: #1B2B3D !important;
+        background-color: #FFFFFF !important;
+        -webkit-text-fill-color: #1B2B3D !important;
+    }
+
+    [data-baseweb="select"] svg,
+    [data-baseweb="input"] svg {
+        color: #526579 !important;
+        fill: #526579 !important;
+    }
+
+    [data-baseweb="tag"] {
+        background-color: #DDF3F0 !important;
+        color: #115E59 !important;
+        border: 1px solid #A7DCD5 !important;
+        border-radius: 6px !important;
+    }
+
+    [data-baseweb="tag"] span,
+    [data-baseweb="tag"] svg {
+        color: #115E59 !important;
+        fill: #115E59 !important;
+    }
+
+    [data-testid="stDataFrame"] {
+        background: #FFFFFF !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stTable"] table {
+        background: #FFFFFF !important;
+        color: #1B2B3D !important;
+    }
+
+    [data-testid="stAlert"] p,
+    [data-testid="stAlert"] li {
+        color: #1B2B3D !important;
+        line-height: 1.5;
     }
 
     [data-testid="stHeader"] {
@@ -71,9 +133,9 @@ st.markdown(
     }
 
     .block-container {
-        max-width: 1500px;
-        padding-top: 2rem;
-        padding-bottom: 3rem;
+        max-width: 1380px;
+        padding-top: 1.4rem;
+        padding-bottom: 2.5rem;
     }
 
     h1, h2, h3, [data-testid="stMetricLabel"] {
@@ -156,7 +218,19 @@ st.markdown(
     }
 
     [data-testid="stExpander"] {
-        background: rgba(255,255,255,0.75);
+        background: #FFFFFF;
+        overflow: hidden;
+    }
+
+    [data-testid="stExpander"] summary {
+        background: #FFFFFF !important;
+        color: var(--navy) !important;
+        font-weight: 700;
+        padding: 0.8rem 1rem;
+    }
+
+    [data-testid="stExpander"] summary:hover {
+        color: var(--teal) !important;
     }
 
     [data-testid="stTabs"] [role="tablist"] {
@@ -165,9 +239,11 @@ st.markdown(
     }
 
     [data-testid="stTabs"] button[role="tab"] {
-        border-radius: 10px 10px 0 0;
-        padding: 0.7rem 1rem;
+        border-radius: 8px 8px 0 0;
+        padding: 0.7rem 0.85rem;
         font-weight: 600;
+        color: #526579 !important;
+        white-space: nowrap;
     }
 
     [data-testid="stTabs"] button[aria-selected="true"] {
