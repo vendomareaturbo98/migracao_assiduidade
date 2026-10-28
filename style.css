@@ -76,20 +76,44 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] 
   background: rgba(20,125,120,.30);
   border-color: rgba(94,234,212,.42);
 }
-/* Ícones lineares monocromáticos, sem emojis, na ordem da navegação existente */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(1) p::before { content: "▦"; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(2) p::before { content: "♙"; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(3) p::before { content: "▤"; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(4) p::before { content: "☑"; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(5) p::before { content: "▥"; }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label p::before {
-  display: inline-block;
-  width: 1.65rem;
-  margin-right: .45rem;
-  color: #FFFFFF;
-  font-size: 1.05rem;
-  text-align: center;
-  vertical-align: -1px;
+/* Ícones SVG vetoriais lineares, brancos e consistentes (opção 1).
+   O pseudo-elemento fica no próprio label para não depender da estrutura
+   interna do Markdown gerado por diferentes versões do Streamlit. */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label {
+  display: flex !important;
+  align-items: center !important;
+  gap: .7rem;
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label::before {
+  content: "";
+  display: block;
+  flex: 0 0 22px;
+  width: 22px;
+  height: 22px;
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+  opacity: .96;
+}
+/* Visão geral — painel */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(1)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1'/%3E%3C/svg%3E");
+}
+/* Colaboradores — usuários */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(2)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='10' cy='7' r='4'/%3E%3Cpath d='M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E");
+}
+/* Treinamentos — livro aberto */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(3)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 7v14'/%3E%3Cpath d='M3 18V5a2 2 0 0 1 2-2h3a4 4 0 0 1 4 4 4 4 0 0 1 4-4h3a2 2 0 0 1 2 2v13h-5a4 4 0 0 0-4 3 4 4 0 0 0-4-3z'/%3E%3C/svg%3E");
+}
+/* Presenças — prancheta com confirmação */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(4)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='4' width='14' height='17' rx='2'/%3E%3Cpath d='M9 4.5V3h6v1.5M8 12l2.5 2.5L16 9'/%3E%3C/svg%3E");
+}
+/* Relatórios — gráfico */
+section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(5)::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3v18h18'/%3E%3Cpath d='m8 14 4-4 4 3 5-7'/%3E%3C/svg%3E");
 }
 
 /* Superfícies e métricas */
@@ -149,4 +173,82 @@ input::placeholder, textarea::placeholder { color: #5A6B7E !important; opacity: 
 @media (max-width: 768px) {
   .block-container { padding: 1rem .8rem 2rem; }
   [data-testid="stMetric"] { padding: .8rem; }
+}
+
+/* Bordas permanentes: campos e controles não ficam mais transparentes até o foco. */
+:root {
+  --border: #C4D0DE;
+  --border-strong: #AABACC;
+}
+
+/* Entradas de texto, números, datas, horários e áreas de texto */
+.stTextInput input,
+.stNumberInput input,
+.stDateInput input,
+.stTimeInput input,
+.stTextArea textarea,
+[data-baseweb="input"],
+[data-baseweb="base-input"],
+[data-baseweb="textarea"] {
+  background: #FFFFFF !important;
+  color: var(--ink) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* Contorno persistente em selects e multiselects */
+[data-baseweb="select"] > div,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+  background: #FFFFFF !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  box-shadow: none !important;
+}
+
+/* Mantém o contorno ao focar, sem depender do clique para torná-lo visível */
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stDateInput input:focus,
+.stTimeInput input:focus,
+.stTextArea textarea:focus,
+[data-baseweb="input"]:focus-within,
+[data-baseweb="base-input"]:focus-within,
+[data-baseweb="textarea"]:focus-within,
+[data-baseweb="select"] > div:focus-within {
+  border-color: var(--teal) !important;
+  box-shadow: 0 0 0 1px rgba(20, 125, 120, .16) !important;
+}
+
+/* Botões de ação, download e envio de formulários */
+.stButton button,
+.stDownloadButton button,
+.stFormSubmitButton button,
+[data-testid="stFileUploader"] button,
+[data-testid="stCameraInput"] button {
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+}
+
+/* Upload, caixas expansíveis e elementos interativos de formulário */
+[data-testid="stFileUploader"] section,
+[data-testid="stFileUploaderDropzone"] {
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 10px !important;
+  background: #FFFFFF !important;
+}
+
+[data-testid="stCheckbox"] label,
+[data-testid="stRadio"] div[role="radiogroup"] > label,
+[data-testid="stToggle"] label {
+  border-color: var(--border) !important;
+}
+
+/* Estado hover discreto, sem ocultar o contorno no estado normal */
+.stButton button:hover,
+.stDownloadButton button:hover,
+.stFormSubmitButton button:hover,
+[data-testid="stFileUploader"] button:hover {
+  border-color: var(--teal) !important;
 }
