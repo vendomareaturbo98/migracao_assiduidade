@@ -35,6 +35,253 @@ st.set_page_config(
 )
 
 
+# ======================================================
+# IDENTIDADE VISUAL — CAMADA DE APRESENTAÇÃO
+# Mantém intactas as regras de negócio e o acesso aos dados.
+# ======================================================
+
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap');
+
+    :root {
+        --navy: #142D4E;
+        --navy-deep: #0D2038;
+        --teal: #147D78;
+        --teal-soft: #E5F4F2;
+        --canvas: #F4F7FA;
+        --surface: #FFFFFF;
+        --ink: #1B2B3D;
+        --muted: #6B7B8D;
+        --line: #E2E8F0;
+    }
+
+    html, body, [class*="css"] {
+        font-family: 'DM Sans', sans-serif;
+        color: var(--ink);
+    }
+
+    .stApp {
+        background: var(--canvas);
+    }
+
+    [data-testid="stHeader"] {
+        background: rgba(244, 247, 250, 0.92);
+    }
+
+    .block-container {
+        max-width: 1500px;
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+    }
+
+    h1, h2, h3, [data-testid="stMetricLabel"] {
+        font-family: 'Manrope', sans-serif !important;
+        color: var(--navy) !important;
+        letter-spacing: -0.025em;
+    }
+
+    h1 { font-weight: 800 !important; }
+    h2, h3 { font-weight: 700 !important; }
+
+    p, label, .stCaption, [data-testid="stCaptionContainer"] {
+        color: var(--muted);
+    }
+
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, var(--navy-deep) 0%, var(--navy) 100%);
+        border-right: 1px solid rgba(255,255,255,0.08);
+    }
+
+    [data-testid="stSidebar"] * {
+        color: #F4F8FC;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
+        color: #C6D5E5;
+    }
+
+    [data-testid="stSidebar"] [data-testid="stRadio"] > label {
+        color: #DCE7F2 !important;
+        font-weight: 700;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] {
+        gap: 0.35rem;
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label {
+        border-radius: 10px;
+        padding: 0.6rem 0.7rem;
+        transition: background 0.2s ease;
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:hover {
+        background: rgba(255,255,255,0.10);
+    }
+
+    [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked) {
+        background: var(--teal);
+        box-shadow: inset 3px 0 0 #9DE3D9;
+    }
+
+    [data-testid="stMetric"] {
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 1.15rem 1.2rem;
+        box-shadow: 0 5px 18px rgba(20, 45, 78, 0.045);
+        min-height: 118px;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-size: 0.86rem !important;
+        font-weight: 600 !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: var(--navy) !important;
+        font-family: 'Manrope', sans-serif;
+        font-weight: 800;
+    }
+
+    [data-testid="stVerticalBlockBorderWrapper"],
+    [data-testid="stExpander"] {
+        border-color: var(--line) !important;
+        border-radius: 14px !important;
+    }
+
+    [data-testid="stExpander"] {
+        background: rgba(255,255,255,0.75);
+    }
+
+    [data-testid="stTabs"] [role="tablist"] {
+        gap: 0.45rem;
+        border-bottom: 1px solid var(--line);
+    }
+
+    [data-testid="stTabs"] button[role="tab"] {
+        border-radius: 10px 10px 0 0;
+        padding: 0.7rem 1rem;
+        font-weight: 600;
+    }
+
+    [data-testid="stTabs"] button[aria-selected="true"] {
+        color: var(--teal) !important;
+        border-bottom-color: var(--teal) !important;
+    }
+
+    .stButton > button, .stDownloadButton > button,
+    [data-testid="stFormSubmitButton"] > button {
+        border-radius: 10px;
+        min-height: 2.65rem;
+        font-weight: 700;
+        border: 1px solid var(--line);
+        transition: all 0.18s ease;
+    }
+
+    .stButton > button[kind="primary"],
+    [data-testid="stFormSubmitButton"] > button[kind="primary"] {
+        background: var(--teal);
+        border-color: var(--teal);
+        color: white;
+    }
+
+    .stButton > button:hover, .stDownloadButton > button:hover,
+    [data-testid="stFormSubmitButton"] > button:hover {
+        border-color: var(--teal);
+        color: var(--teal);
+        transform: translateY(-1px);
+    }
+
+    [data-testid="stDataFrame"], [data-testid="stTable"] {
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: white;
+    }
+
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stDateInput"] input,
+    [data-testid="stTimeInput"] input,
+    [data-testid="stSelectbox"] [data-baseweb="select"],
+    [data-testid="stMultiSelect"] [data-baseweb="select"],
+    [data-testid="stTextArea"] textarea {
+        border-radius: 10px;
+    }
+
+    [data-testid="stAlert"] {
+        border-radius: 12px;
+    }
+
+    hr {
+        border-color: var(--line);
+    }
+
+    .app-brand {
+        padding: 0.35rem 0 1.25rem;
+        margin-bottom: 1.1rem;
+        border-bottom: 1px solid rgba(255,255,255,0.16);
+    }
+
+    .app-brand-mark {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 42px;
+        height: 42px;
+        border-radius: 13px;
+        background: rgba(20,125,120,0.95);
+        color: #FFFFFF;
+        font-size: 1.25rem;
+        margin-bottom: 0.75rem;
+        box-shadow: 0 7px 18px rgba(0,0,0,0.16);
+    }
+
+    .app-brand-title {
+        color: #FFFFFF;
+        font: 800 1.05rem 'Manrope', sans-serif;
+        letter-spacing: -0.03em;
+    }
+
+    .app-brand-subtitle {
+        color: #B8CADC;
+        font-size: 0.76rem;
+        margin-top: 0.25rem;
+    }
+
+    .page-eyebrow {
+        color: var(--teal);
+        font-size: 0.75rem;
+        font-weight: 800;
+        letter-spacing: 0.13em;
+        text-transform: uppercase;
+        margin-bottom: 0.35rem;
+    }
+
+    @media (max-width: 768px) {
+        .block-container {
+            padding: 1rem 0.8rem 2rem;
+        }
+        [data-testid="stMetric"] {
+            padding: 0.8rem;
+            min-height: 100px;
+        }
+        [data-testid="stMetricValue"] {
+            font-size: 1.45rem;
+        }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
 def obter_senha_admin():
     senha = os.environ.get("ADMIN_PASSWORD", "").strip()
     if senha:
@@ -145,10 +392,17 @@ def carregar_participacoes_dashboard():
 def exibir_grafico(figura, descricao):
     """Centraliza a configuração de acessibilidade e dos controles dos gráficos."""
     figura.update_layout(
-        margin=dict(l=12, r=12, t=36, b=12),
+        margin=dict(l=12, r=12, t=48, b=16),
         legend_title_text="",
         hoverlabel=dict(namelength=-1),
+        paper_bgcolor="rgba(255,255,255,0)",
+        plot_bgcolor="rgba(255,255,255,0)",
+        font=dict(family="DM Sans, sans-serif", color="#526579", size=12),
+        title_font=dict(family="Manrope, sans-serif", size=16, color="#142D4E"),
+        colorway=["#147D78", "#142D4E", "#6EA9A4", "#D5A34A", "#C45C5C"],
     )
+    figura.update_xaxes(showgrid=False, zeroline=False, linecolor="#E2E8F0")
+    figura.update_yaxes(gridcolor="#E8EEF4", zeroline=False)
     # O parâmetro "alt" não é passado para manter compatibilidade com
     # versões do Streamlit a partir da faixa 1.40 definida em requirements.txt.
     st.plotly_chart(
@@ -462,12 +716,32 @@ def formatar_treinamento(linha):
 # INTERFACE PRINCIPAL
 # ======================================================
 
-st.title("📊 Sistema de Assiduidade")
-st.caption("Educação Continuada | Banco de dados PostgreSQL na nuvem")
+st.markdown('<div class="page-eyebrow">Educação continuada · Gestão de pessoas</div>', unsafe_allow_html=True)
+st.title("Sistema de Assiduidade")
+st.caption("Acompanhe treinamentos, presença e indicadores da equipe em um só lugar.")
+
+with st.sidebar:
+    st.markdown(
+        """
+        <div class="app-brand">
+            <div class="app-brand-mark">✓</div>
+            <div class="app-brand-title">Assiduidade</div>
+            <div class="app-brand-subtitle">Educação continuada · Gestão</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 menu = st.sidebar.radio(
     "Navegação",
     ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Relatórios"],
+    format_func=lambda item: {
+        "Visão geral": "◫  Visão geral",
+        "Colaboradores": "♙  Colaboradores",
+        "Treinamentos": "▣  Treinamentos",
+        "Presenças": "✓  Presenças",
+        "Relatórios": "▤  Relatórios",
+    }.get(item, item),
 )
 
 
