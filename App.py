@@ -69,7 +69,11 @@ if not senha_configurada:
 if not st.session_state.get("admin_autenticado", False):
     st.title("🔐 Acesso administrativo")
     with st.form("form_login_admin"):
-        senha_digitada = st.text_input("Senha administrativa", type="password")
+        senha_digitada = st.text_input(
+            "Senha administrativa",
+            type="password",
+            autocomplete="current-password",
+        )
         entrar = st.form_submit_button("Entrar", use_container_width=True)
     if entrar:
         if hmac.compare_digest(senha_digitada, senha_configurada):
