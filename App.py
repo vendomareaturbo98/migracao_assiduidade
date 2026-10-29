@@ -652,6 +652,9 @@ elif menu == "Colaboradores":
 
 elif menu == "Treinamentos":
     st.header("Cadastro e gerenciamento de treinamentos")
+    aviso = st.session_state.pop("aviso_treinamentos", None)
+    if aviso:
+        st.success(aviso)
     colaboradores = listar_colaboradores()
 
     st.subheader("1. Definir colaboradores elegíveis")
@@ -700,7 +703,21 @@ elif menu == "Treinamentos":
             key="selecionar_todos_treinamento",
         )
         if selecionar_todos:
-            ids = list(opcoes.values())
+            # Permite tirar colaboradores específicos mesmo com o grupo inteiro marcado.
+            excecoes = st.multiselect(
+                "Remover colaboradores da seleção (opcional)",
+                options=list(opcoes.keys()),
+                key="excecoes_selecao_treinamento",
+                help=(
+                    "Todos os colaboradores exibidos serão incluídos, "
+                    "exceto os que você escolher aqui."
+                ),
+            )
+            ids = [cid for nome, cid in opcoes.items() if nome not in excecoes]
+            if excecoes:
+                st.caption(
+                    f"{len(excecoes)} colaborador(es) removido(s) da seleção."
+                )
         else:
             selecionados = st.multiselect(
                 "Escolha os colaboradores", options=list(opcoes.keys()),
@@ -893,6 +910,7 @@ elif menu == "Treinamentos":
                 key="botao_excluir_treinamento",
             ):
                 id_excluir = opcoes_exclusao[escolha_exclusao]
+                excluido = False
                 try:
                     with conectar() as conn:
                         registro = conn.execute(
@@ -906,6 +924,11 @@ elif menu == "Treinamentos":
                                 "Só é permitido excluir treinamentos com status Agendado."
                             )
                         else:
+                            # Remove os registros dependentes antes do treinamento.
+                            conn.execute(
+                                "DELETE FROM presencas WHERE treinamento_id = ?",
+                                (id_excluir,),
+                            )
                             conn.execute(
                                 "DELETE FROM elegibilidade WHERE treinamento_id = ?",
                                 (id_excluir,),
@@ -918,10 +941,17 @@ elif menu == "Treinamentos":
                                 (id_excluir,),
                             )
                             if resultado.rowcount == 1:
-                                st.success("Treinamento excluído com sucesso.")
-                                st.rerun()
+                                excluido = True
                             else:
                                 st.error("Nenhum treinamento foi excluído.")
+                    # O bloco "with" já terminou: o COMMIT foi feito.
+                    # st.rerun() precisa vir depois, nunca dentro do "with".
+                    if excluido:
+                        st.session_state["aviso_treinamentos"] = (
+                            "Treinamento excluído com sucesso."
+                        )
+                        st.session_state.pop("confirmar_exclusao_treinamento", None)
+                        st.rerun()
                 except Exception:
                     st.error(
                         "Não foi possível excluir o treinamento. "
