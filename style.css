@@ -130,8 +130,19 @@ section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] lab
 
 /* Esconde a bolinha nativa do radio (o primeiro bloco do label que não contém o texto) */
 section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label
-  > :is(div, span):first-child:not(:has([data-testid="stMarkdownContainer"])) {
+  > *:not(input):not([data-testid="stMarkdownContainer"]):not(:has([data-testid="stMarkdownContainer"])) {
   display: none !important;
+}
+/* Reforço: se o círculo for desenhado por outro elemento, zera seu tamanho */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label > div:first-child:not(:has(p)) {
+  width: 0 !important;
+  height: 0 !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  opacity: 0 !important;
+  overflow: hidden !important;
 }
 
 /* Texto do item */
