@@ -88,6 +88,30 @@ if not st.session_state.get("admin_autenticado", False):
 inicializar_banco()
 
 
+@st.cache_resource(show_spinner=False)
+def garantir_colunas_dois_dias():
+    """Adiciona, uma única vez, as colunas do recurso "treinamento em dois dias".
+
+    Não apaga nem altera dados existentes: treinamentos antigos ficam com
+    data_dia2 vazia e continuam funcionando como treinamentos de um dia.
+    """
+    with conectar() as conn:
+        conn.execute("ALTER TABLE treinamentos ADD COLUMN IF NOT EXISTS data_dia2 TEXT", ())
+        conn.execute("ALTER TABLE presencas ADD COLUMN IF NOT EXISTS presente_dia1 INTEGER", ())
+        conn.execute("ALTER TABLE presencas ADD COLUMN IF NOT EXISTS presente_dia2 INTEGER", ())
+    return True
+
+
+try:
+    garantir_colunas_dois_dias()
+except Exception:
+    st.error(
+        "Não foi possível preparar o banco para treinamentos em dois dias. "
+        "Verifique os logs e as permissões do usuário do banco."
+    )
+    st.stop()
+
+
 # ======================================================
 # FUNÇÕES AUXILIARES
 # ======================================================
@@ -127,7 +151,7 @@ def listar_colaboradores(ativos=True):
 
 def listar_treinamentos():
     return consultar("""
-        SELECT id, titulo, data, hora_inicio, hora_fim, carga_horaria,
+        SELECT id, titulo, data, data_dia2, hora_inicio, hora_fim, carga_horaria,
                publico, situacao, observacoes, criado_em
         FROM treinamentos
         ORDER BY data DESC, hora_inicio DESC, id DESC
@@ -377,9 +401,11 @@ def exibir_visao_geral():
             st.info("Não há treinamentos no período selecionado.")
         else:
             agenda = treinamentos_filtrados[
-                ["titulo", "data", "hora_inicio", "hora_fim", "carga_horaria", "situacao"]
+                ["titulo", "data", "data_dia2", "hora_inicio", "hora_fim",
+                 "carga_horaria", "situacao"]
             ].rename(columns={
-                "titulo": "Treinamento", "data": "Data", "hora_inicio": "Início",
+                "titulo": "Treinamento", "data": "Data", "data_dia2": "2º dia",
+                "hora_inicio": "Início",
                 "hora_fim": "Fim", "carga_horaria": "Carga horária", "situacao": "Situação",
             })
             st.dataframe(agenda, hide_index=True, use_container_width=True)
@@ -467,10 +493,23 @@ def preparar_planilha(arquivo, aba=None):
     return base, importaveis, excluidos, ambiguos
 
 
+def texto_data_dia2(valor):
+    """Devolve a data do 2º dia como texto AAAA-MM-DD, ou "" quando não existe."""
+    if valor is None or pd.isna(valor):
+        return ""
+    return str(valor)[:10]
+
+
+def sufixo_dia2(linha):
+    """Trecho " e AAAA-MM-DD" para treinamentos em dois dias (vazio nos demais)."""
+    dia2 = texto_data_dia2(linha.get("data_dia2"))
+    return f" e {dia2}" if dia2 else ""
+
+
 def formatar_treinamento(linha):
     return (
         f'ID {int(linha["id"])} | {linha["titulo"]} | '
-        f'Data: {linha["data"]} | Status: {linha["situacao"]}'
+        f'Data: {linha["data"]}{sufixo_dia2(linha)} | Status: {linha["situacao"]}'
     )
 
 
@@ -735,7 +774,15 @@ elif menu == "Treinamentos":
     st.subheader("2. Informações do novo treinamento")
     with st.form("form_treinamento"):
         titulo = st.text_input("Nome do treinamento")
-        data_treinamento = st.date_input("Data", value=date.today())
+        data_treinamento = st.date_input("Data (1º dia)", value=date.today())
+        data_dia2_novo = st.date_input(
+            "Data do 2º dia (opcional)",
+            value=None,
+            help=(
+                "Preencha apenas se o mesmo treinamento for dividido em dois dias. "
+                "Quem comparecer em qualquer um dos dias conta como presente."
+            ),
+        )
         col1, col2 = st.columns(2)
         with col1:
             hora_inicio = st.time_input("Horário de início", value=time(8, 0))
@@ -756,6 +803,8 @@ elif menu == "Treinamentos":
                 st.error("Informe o nome do treinamento.")
             elif hora_fim <= hora_inicio:
                 st.error("O horário de término deve ser posterior ao início.")
+            elif data_dia2_novo is not None and data_dia2_novo <= data_treinamento:
+                st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
             elif not ids:
                 st.error("Selecione pelo menos um colaborador elegível.")
             else:
@@ -764,12 +813,13 @@ elif menu == "Treinamentos":
                         cursor = conn.execute(
                             """
                             INSERT INTO treinamentos
-                            (titulo, data, hora_inicio, hora_fim, carga_horaria,
-                             publico, situacao, observacoes)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                            (titulo, data, data_dia2, hora_inicio, hora_fim,
+                             carga_horaria, publico, situacao, observacoes)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                             """,
                             (
                                 titulo.strip(), data_treinamento.isoformat(),
+                                data_dia2_novo.isoformat() if data_dia2_novo else None,
                                 hora_inicio.strftime("%H:%M"),
                                 hora_fim.strftime("%H:%M"), float(carga),
                                 publico, situacao_novo, observacoes.strip(),
@@ -801,11 +851,14 @@ elif menu == "Treinamentos":
     else:
         st.dataframe(
             treinamentos[
-                ["id", "titulo", "data", "hora_inicio", "hora_fim",
+                ["id", "titulo", "data", "data_dia2", "hora_inicio", "hora_fim",
                  "carga_horaria", "publico", "situacao"]
             ],
             hide_index=True,
             use_container_width=True,
+            column_config={
+                "data_dia2": st.column_config.TextColumn("Data do 2º dia"),
+            },
         )
 
         st.markdown("### Alterar status ou remarcar treinamento")
@@ -828,9 +881,16 @@ elif menu == "Treinamentos":
         except ValueError:
             data_atual = date.today()
 
+        dia2_atual_str = texto_data_dia2(atual["data_dia2"])
+        try:
+            dia2_atual = date.fromisoformat(dia2_atual_str) if dia2_atual_str else None
+        except ValueError:
+            dia2_atual = None
+
         st.caption(
             f"Status atual: **{status_atual}** | "
             f"Data atual: **{data_atual_str}**"
+            + (f" | 2º dia: **{dia2_atual_str}**" if dia2_atual_str else "")
         )
         with st.form(f"form_editar_treinamento_{tid_editar}"):
             novo_status = st.selectbox(
@@ -839,7 +899,13 @@ elif menu == "Treinamentos":
                 index=SITUACOES.index(status_atual)
                 if status_atual in SITUACOES else 0,
             )
-            nova_data = st.date_input("Data do treinamento", value=data_atual)
+            nova_data = st.date_input("Data do treinamento (1º dia)", value=data_atual)
+            nova_data_dia2 = st.date_input(
+                "Data do 2º dia (opcional)",
+                value=dia2_atual,
+                key=f"data_dia2_treinamento_{tid_editar}",
+                help="Deixe vazio para treinamentos de um único dia.",
+            )
             nova_observacao = st.text_area(
                 "Observações",
                 value=str(atual["observacoes"] or ""),
@@ -861,29 +927,33 @@ elif menu == "Treinamentos":
                         "Você está reabrindo um treinamento já marcado como realizado. "
                         "Confira se essa alteração é realmente necessária."
                     )
-                try:
-                    with conectar() as conn:
-                        resultado = conn.execute(
-                            """
-                            UPDATE treinamentos
-                            SET situacao = ?, data = ?, observacoes = ?
-                            WHERE id = ?
-                            """,
-                            (
-                                novo_status, nova_data.isoformat(),
-                                nova_observacao.strip(), tid_editar,
-                            ),
+                if nova_data_dia2 is not None and nova_data_dia2 <= nova_data:
+                    st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
+                else:
+                    try:
+                        with conectar() as conn:
+                            resultado = conn.execute(
+                                """
+                                UPDATE treinamentos
+                                SET situacao = ?, data = ?, data_dia2 = ?, observacoes = ?
+                                WHERE id = ?
+                                """,
+                                (
+                                    novo_status, nova_data.isoformat(),
+                                    nova_data_dia2.isoformat() if nova_data_dia2 else None,
+                                    nova_observacao.strip(), tid_editar,
+                                ),
+                            )
+                        if resultado.rowcount == 1:
+                            st.success("Treinamento atualizado com sucesso.")
+                            st.rerun()
+                        else:
+                            st.error("O treinamento não foi encontrado para atualização.")
+                    except Exception:
+                        st.error(
+                            "Não foi possível atualizar o treinamento. "
+                            "Verifique os logs do aplicativo."
                         )
-                    if resultado.rowcount == 1:
-                        st.success("Treinamento atualizado com sucesso.")
-                        st.rerun()
-                    else:
-                        st.error("O treinamento não foi encontrado para atualização.")
-                except Exception:
-                    st.error(
-                        "Não foi possível atualizar o treinamento. "
-                        "Verifique os logs do aplicativo."
-                    )
 
     # Mantém exclusão restrita aos agendados, como na versão anterior.
     st.divider()
@@ -976,7 +1046,7 @@ elif menu == "Presenças":
 
     mapa_treinamentos = {
         (
-            f'{r["data"]} | {r["titulo"]} | {r["hora_inicio"]} '
+            f'{r["data"]}{sufixo_dia2(r)} | {r["titulo"]} | {r["hora_inicio"]} '
             f'| Status: {r["situacao"]} | ID {r["id"]}'
         ): int(r["id"])
         for _, r in treinamentos.iterrows()
@@ -1010,7 +1080,7 @@ elif menu == "Presenças":
     ids_elegiveis = elegiveis["id"].astype(int).tolist()
     atuais = consultar(
         """
-        SELECT colaborador_id, presente
+        SELECT colaborador_id, presente, presente_dia1, presente_dia2
         FROM presencas
         WHERE treinamento_id = ?
         """,
@@ -1029,32 +1099,94 @@ elif menu == "Presenças":
         nomes[cid] for cid in ids_elegiveis if cid in presentes_atuais
     ]
 
+    data_dia2_texto = texto_data_dia2(treinamento["data_dia2"])
+    dois_dias = bool(data_dia2_texto)
+
+    # Presença por dia (somente treinamentos em dois dias).
+    dia1_atual, dia2_atual = set(), set()
+    for _, linha_p in atuais.iterrows():
+        cid_p = int(linha_p["colaborador_id"])
+        p1, p2 = linha_p["presente_dia1"], linha_p["presente_dia2"]
+        if pd.notna(p2) and int(p2) == 1:
+            dia2_atual.add(cid_p)
+        if pd.notna(p1):
+            if int(p1) == 1:
+                dia1_atual.add(cid_p)
+        elif pd.notna(linha_p["presente"]) and int(linha_p["presente"]) == 1 \
+                and cid_p not in dia2_atual:
+            # Registro feito antes do recurso de dois dias: vale para o 1º dia.
+            dia1_atual.add(cid_p)
+
     with st.form("form_presencas"):
-        presentes = st.multiselect(
-            "Selecione quem esteve presente",
-            options=[nomes[cid] for cid in ids_elegiveis],
-            default=selecionados_atuais,
-        )
+        if dois_dias:
+            st.caption(
+                "Treinamento em dois dias: quem estiver presente em pelo menos "
+                "um dos dias é contabilizado como presente. Só é ausência "
+                "quem faltar nos dois."
+            )
+            opcoes_presenca = [nomes[cid] for cid in ids_elegiveis]
+            presentes_dia1 = st.multiselect(
+                f'Presentes no 1º dia ({str(treinamento["data"])[:10]})',
+                options=opcoes_presenca,
+                default=[nomes[cid] for cid in ids_elegiveis if cid in dia1_atual],
+                key=f"presentes_dia1_{tid}",
+            )
+            presentes_dia2 = st.multiselect(
+                f"Presentes no 2º dia ({data_dia2_texto})",
+                options=opcoes_presenca,
+                default=[nomes[cid] for cid in ids_elegiveis if cid in dia2_atual],
+                key=f"presentes_dia2_{tid}",
+            )
+        else:
+            presentes = st.multiselect(
+                "Selecione quem esteve presente",
+                options=[nomes[cid] for cid in ids_elegiveis],
+                default=selecionados_atuais,
+            )
         salvar_presencas = st.form_submit_button("Salvar presenças")
         if salvar_presencas:
-            presentes_ids = {
-                cid for cid in ids_elegiveis if nomes[cid] in presentes
-            }
             try:
                 with conectar() as conn:
-                    for cid in ids_elegiveis:
-                        conn.execute(
-                            """
-                            INSERT INTO presencas
-                            (treinamento_id, colaborador_id, presente)
-                            VALUES (?, ?, ?)
-                            ON CONFLICT(treinamento_id, colaborador_id)
-                            DO UPDATE SET
-                                presente = excluded.presente,
-                                atualizado_em = CURRENT_TIMESTAMP::text
-                            """,
-                            (tid, cid, 1 if cid in presentes_ids else 0),
-                        )
+                    if dois_dias:
+                        ids_dia1 = {cid for cid in ids_elegiveis if nomes[cid] in presentes_dia1}
+                        ids_dia2 = {cid for cid in ids_elegiveis if nomes[cid] in presentes_dia2}
+                        for cid in ids_elegiveis:
+                            p1 = 1 if cid in ids_dia1 else 0
+                            p2 = 1 if cid in ids_dia2 else 0
+                            conn.execute(
+                                """
+                                INSERT INTO presencas
+                                (treinamento_id, colaborador_id, presente,
+                                 presente_dia1, presente_dia2)
+                                VALUES (?, ?, ?, ?, ?)
+                                ON CONFLICT(treinamento_id, colaborador_id)
+                                DO UPDATE SET
+                                    presente = excluded.presente,
+                                    presente_dia1 = excluded.presente_dia1,
+                                    presente_dia2 = excluded.presente_dia2,
+                                    atualizado_em = CURRENT_TIMESTAMP::text
+                                """,
+                                (tid, cid, 1 if (p1 or p2) else 0, p1, p2),
+                            )
+                    else:
+                        presentes_ids = {
+                            cid for cid in ids_elegiveis if nomes[cid] in presentes
+                        }
+                        for cid in ids_elegiveis:
+                            conn.execute(
+                                """
+                                INSERT INTO presencas
+                                (treinamento_id, colaborador_id, presente)
+                                VALUES (?, ?, ?)
+                                ON CONFLICT(treinamento_id, colaborador_id)
+                                DO UPDATE SET
+                                    presente = excluded.presente,
+                                    presente_dia1 = NULL,
+                                    presente_dia2 = NULL,
+                                    atualizado_em = CURRENT_TIMESTAMP::text
+                                """,
+                                (tid, cid, 1 if cid in presentes_ids else 0),
+                            )
                 st.success("Presenças salvas com sucesso.")
                 st.rerun()
             except Exception:
@@ -1081,6 +1213,7 @@ elif menu == "Relatórios":
             t.id AS treinamento_id,
             t.titulo AS treinamento,
             t.data,
+            COALESCE(t.data_dia2, t.data::text) AS data_fim,
             t.situacao,
             c.nome,
             c.matricula,
@@ -1106,7 +1239,7 @@ elif menu == "Relatórios":
 
         realizado_e_data_passada = (
             (resumo["situacao"] == "Realizado")
-            & (resumo["data"].astype(str) <= hoje)
+            & (resumo["data_fim"].astype(str).str[:10] <= hoje)
         )
         resumo.loc[
             realizado_e_data_passada & (resumo["presente"] == 1),
