@@ -1,22 +1,43 @@
-/* Sistema de Assiduidade — Premium Executivo */
+/* Sistema de Assiduidade — Premium Executivo (v2)
+   Paleta: navy #142D4E · navy profundo #0D2038 · teal #147D78 · menta #5EEAD4 · fundo #F3F6FA
+   Tipografia: Plus Jakarta Sans (títulos e corpo) */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap');
+
 :root {
   --navy: #142D4E;
   --navy-deep: #0D2038;
   --teal: #147D78;
+  --teal-dark: #0F615D;
   --teal-light: #DDF3F0;
+  --mint: #5EEAD4;
   --canvas: #F3F6FA;
   --surface: #FFFFFF;
   --ink: #24364B;
-  --muted: #24364B;
+  --muted: #5A6B7E;
   --border: #D8E1EB;
-  --shadow: 0 5px 18px rgba(20, 45, 78, .06);
+  --border-strong: #B7C5D6;
+  --shadow: 0 1px 2px rgba(20, 45, 78, .05), 0 6px 18px rgba(20, 45, 78, .05);
 }
 
-/* Área principal: mesma cor de texto em todos os tamanhos */
+/* ------------------------------------------------------------------
+   Base e tipografia
+   (a fonte não é aplicada em "span" para não quebrar os ícones do Streamlit)
+------------------------------------------------------------------- */
+html, body, .stApp,
+.stApp p, .stApp label, .stApp li, .stApp small,
+.stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp h5, .stApp h6,
+.stApp input, .stApp textarea, .stApp button,
+[data-baseweb="select"], [data-baseweb="tab"], [data-baseweb="tag"] {
+  font-family: 'Plus Jakarta Sans', 'Segoe UI', system-ui, -apple-system, sans-serif;
+}
+
 .stApp, [data-testid="stAppViewContainer"] {
   background: var(--canvas);
   color: var(--ink);
 }
+header[data-testid="stHeader"] { background: transparent; }
+
+/* Área principal: mesma cor de texto em todos os tamanhos */
 .stApp [data-testid="stMain"] *,
 .stApp [data-testid="stMain"] p,
 .stApp [data-testid="stMain"] label,
@@ -33,19 +54,39 @@
 }
 
 .block-container {
-  max-width: 1500px;
-  padding-top: 2rem;
+  max-width: 1400px;
+  padding-top: 2.5rem;
   padding-bottom: 3rem;
 }
 
-h1, h2, h3, h4 { letter-spacing: -0.025em; }
-h1 { font-weight: 750; }
-h2, h3 { font-weight: 700; }
+h1, h2, h3, h4 { letter-spacing: -0.02em; }
+.stApp [data-testid="stMain"] h1 {
+  color: var(--navy);
+  font-size: 2.15rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+.stApp [data-testid="stMain"] h2 {
+  color: var(--navy);
+  font-size: 1.5rem;
+  font-weight: 700;
+  margin-top: .5rem;
+}
+.stApp [data-testid="stMain"] h3 { color: var(--navy); font-weight: 700; }
 
-/* Navegação lateral premium */
+/* Legendas e subtítulos */
+[data-testid="stCaptionContainer"],
+[data-testid="stCaptionContainer"] * {
+  color: var(--muted) !important;
+  font-size: .9rem;
+}
+
+/* ------------------------------------------------------------------
+   Navegação lateral
+------------------------------------------------------------------- */
 section[data-testid="stSidebar"] {
-  background: linear-gradient(180deg, var(--navy-deep), var(--navy));
-  border-right: 1px solid rgba(255,255,255,.08);
+  background: linear-gradient(180deg, var(--navy-deep) 0%, var(--navy) 100%);
+  border-right: 1px solid rgba(255, 255, 255, .06);
 }
 section[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p,
 section[data-testid="stSidebar"] label,
@@ -55,149 +96,210 @@ section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
   color: #FFFFFF !important;
 }
-section[data-testid="stSidebar"] [data-testid="stRadio"] > label {
-  color: #D7E2EF !important;
-  font-weight: 700;
-  margin-bottom: .6rem;
+
+/* Título do grupo ("Navegação") */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stWidgetLabel"],
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stWidgetLabel"] * {
+  color: #8FA6C1 !important;
+  font-size: .82rem;
+  font-weight: 600;
+  letter-spacing: .02em;
 }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label {
+section[data-testid="stSidebar"] [data-testid="stRadio"] [data-testid="stWidgetLabel"] {
+  padding-left: .8rem;
+  margin-bottom: .5rem;
+}
+
+/* Cada item do menu.
+   Seletor sem ">" entre o radiogroup e o label: funciona mesmo que o Streamlit
+   envolva os labels em outros elementos (o que impedia o estilo de aparecer). */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label {
+  position: relative;
+  display: flex !important;
+  align-items: center !important;
+  gap: .75rem;
+  width: 100%;
+  margin: .15rem 0;
+  padding: .62rem .8rem;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 10px;
-  padding: .62rem .7rem;
-  margin: .18rem 0;
+  cursor: pointer;
   transition: background .15s ease, border-color .15s ease;
 }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:hover {
-  background: rgba(255,255,255,.08);
-  border-color: rgba(255,255,255,.10);
+
+/* Esconde a bolinha nativa do radio (o primeiro bloco do label que não contém o texto) */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label
+  > :is(div, span):first-child:not(:has([data-testid="stMarkdownContainer"])) {
+  display: none !important;
 }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:has(input:checked) {
-  background: rgba(20,125,120,.30);
-  border-color: rgba(94,234,212,.42);
+
+/* Texto do item */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label [data-testid="stMarkdownContainer"] p {
+  margin: 0;
+  font-size: .94rem;
+  font-weight: 500;
+  color: #C5D3E4 !important;
 }
-/* Ícones SVG vetoriais lineares, brancos e consistentes (opção 1).
-   O pseudo-elemento fica no próprio label para não depender da estrutura
-   interna do Markdown gerado por diferentes versões do Streamlit. */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label {
-  display: flex !important;
-  align-items: center !important;
-  gap: .7rem;
+
+/* Hover */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:hover {
+  background: rgba(255, 255, 255, .06);
 }
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label::before {
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:hover [data-testid="stMarkdownContainer"] p {
+  color: #FFFFFF !important;
+}
+
+/* Item selecionado */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) {
+  background: rgba(20, 125, 120, .28);
+  border-color: rgba(94, 234, 212, .30);
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked) [data-testid="stMarkdownContainer"] p {
+  color: #FFFFFF !important;
+  font-weight: 650;
+}
+/* Barra de destaque à esquerda do item ativo */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label::after {
+  content: "";
+  position: absolute;
+  left: -1px;
+  top: 22%;
+  bottom: 22%;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--mint);
+  opacity: 0;
+  transition: opacity .15s ease;
+}
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked)::after {
+  opacity: 1;
+}
+
+/* ---- Ícones SVG (traço branco, estilo linear) ---- */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label::before {
   content: "";
   display: block;
-  flex: 0 0 22px;
-  width: 22px;
-  height: 22px;
+  flex: 0 0 20px;
+  width: 20px;
+  height: 20px;
   background-repeat: no-repeat;
   background-position: center;
   background-size: contain;
-  opacity: .96;
+  opacity: .72;
+  transition: opacity .15s ease;
 }
-/* Visão geral — painel */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(1)::before {
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:hover::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked)::before {
+  opacity: 1;
+}
+
+/* Cada ícone tem dois seletores: um para labels que são filhos diretos do radiogroup
+   e outro para labels envolvidos em um elemento extra. */
+
+/* 1 · Visão geral — painel */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > label:nth-child(1)::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > *:nth-child(1) > label::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='3' width='7' height='7' rx='1'/%3E%3Crect x='14' y='3' width='7' height='7' rx='1'/%3E%3Crect x='3' y='14' width='7' height='7' rx='1'/%3E%3Crect x='14' y='14' width='7' height='7' rx='1'/%3E%3C/svg%3E");
 }
-/* Colaboradores — usuários */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(2)::before {
+/* 2 · Colaboradores — usuários */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > label:nth-child(2)::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > *:nth-child(2) > label::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2'/%3E%3Ccircle cx='10' cy='7' r='4'/%3E%3Cpath d='M20 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75'/%3E%3C/svg%3E");
 }
-/* Treinamentos — livro aberto */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(3)::before {
+/* 3 · Treinamentos — livro aberto */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > label:nth-child(3)::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > *:nth-child(3) > label::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 7v14'/%3E%3Cpath d='M3 18V5a2 2 0 0 1 2-2h3a4 4 0 0 1 4 4 4 4 0 0 1 4-4h3a2 2 0 0 1 2 2v13h-5a4 4 0 0 0-4 3 4 4 0 0 0-4-3z'/%3E%3C/svg%3E");
 }
-/* Presenças — prancheta com confirmação */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(4)::before {
+/* 4 · Presenças — prancheta com confirmação */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > label:nth-child(4)::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > *:nth-child(4) > label::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='5' y='4' width='14' height='17' rx='2'/%3E%3Cpath d='M9 4.5V3h6v1.5M8 12l2.5 2.5L16 9'/%3E%3C/svg%3E");
 }
-/* Relatórios — gráfico */
-section[data-testid="stSidebar"] [data-testid="stRadio"] div[role="radiogroup"] > label:nth-of-type(5)::before {
+/* 5 · Relatórios — gráfico */
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > label:nth-child(5)::before,
+section[data-testid="stSidebar"] [data-testid="stRadio"] [role="radiogroup"] > *:nth-child(5) > label::before {
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='1.7' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 3v18h18'/%3E%3Cpath d='m8 14 4-4 4 3 5-7'/%3E%3C/svg%3E");
 }
 
-/* Superfícies e métricas */
-[data-testid="stMetric"],
+/* ------------------------------------------------------------------
+   Superfícies: filtros, tabelas, formulários, gráficos
+------------------------------------------------------------------- */
 div[data-testid="stForm"],
 div[data-testid="stExpander"],
 div[data-testid="stDataFrame"],
 div[data-testid="stTable"] {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 13px;
+  border-radius: 12px;
   box-shadow: var(--shadow);
 }
-[data-testid="stMetric"] { padding: 1rem 1.15rem; }
-[data-testid="stMetricLabel"] { color: var(--ink) !important; font-weight: 650; }
-[data-testid="stMetricValue"] { color: var(--navy) !important; font-weight: 780; }
+div[data-testid="stExpander"] details { border: 0 !important; background: transparent; }
+div[data-testid="stExpander"] summary { padding: .8rem 1rem; font-weight: 650; }
+div[data-testid="stDataFrame"] { overflow: hidden; }
 
-/* Campos de entrada */
+/* Gráficos dentro de cartões (o fundo do gráfico é transparente) */
+[data-testid="stPlotlyChart"],
+[data-testid="stVegaLiteChart"],
+[data-testid="stArrowVegaLiteChart"] {
+  box-sizing: border-box;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  box-shadow: var(--shadow);
+  padding: .9rem 1rem .5rem;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------
+   Indicadores (métricas)
+------------------------------------------------------------------- */
+[data-testid="stMetric"] {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 1.1rem 1.25rem 1.1rem 1.5rem;
+}
+/* Faixa teal à esquerda: o destaque visual dos indicadores */
+[data-testid="stMetric"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg, var(--teal), #2BB3A8);
+}
+[data-testid="stMetricLabel"],
+[data-testid="stMetricLabel"] * {
+  color: var(--muted) !important;
+  font-size: .86rem;
+  font-weight: 600;
+}
+[data-testid="stMetricValue"],
+[data-testid="stMetricValue"] * {
+  color: var(--navy) !important;
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+}
+
+/* ------------------------------------------------------------------
+   Campos de entrada (bordas sempre visíveis)
+------------------------------------------------------------------- */
 .stTextInput input, .stNumberInput input, .stDateInput input,
 .stTimeInput input, .stTextArea textarea,
-[data-baseweb="select"] > div {
-  background: #FFFFFF !important;
-  color: var(--ink) !important;
-  border-color: var(--border) !important;
-  border-radius: 8px !important;
-}
-input::placeholder, textarea::placeholder { color: #5A6B7E !important; opacity: 1; }
-
-/* Botões */
-.stButton button, .stDownloadButton button, .stFormSubmitButton button {
-  border-radius: 8px;
-  font-weight: 650;
-  border-color: var(--border);
-  transition: all .15s ease;
-}
-.stButton button[kind="primary"],
-.stFormSubmitButton button[kind="primary"] {
-  background: var(--teal);
-  border-color: var(--teal);
-  color: #FFFFFF !important;
-}
-.stButton button[kind="primary"] *,
-.stFormSubmitButton button[kind="primary"] * { color: #FFFFFF !important; }
-.stButton button:hover, .stDownloadButton button:hover,
-.stFormSubmitButton button:hover { border-color: var(--teal); }
-
-/* Abas */
-.stTabs [data-baseweb="tab-list"] { gap: .4rem; border-bottom: 1px solid var(--border); }
-.stTabs [data-baseweb="tab"] { color: var(--ink) !important; font-weight: 650; }
-.stTabs [aria-selected="true"] { border-bottom-color: var(--teal) !important; }
-
-/* Mensagens com contraste consistente */
-[data-testid="stAlert"] { border-radius: 10px; }
-[data-testid="stAlert"] p, [data-testid="stAlert"] span { color: var(--ink) !important; }
-
-/* Ajustes para telas estreitas */
-@media (max-width: 768px) {
-  .block-container { padding: 1rem .8rem 2rem; }
-  [data-testid="stMetric"] { padding: .8rem; }
-}
-
-/* Bordas permanentes: campos e controles não ficam mais transparentes até o foco. */
-:root {
-  --border: #C4D0DE;
-  --border-strong: #AABACC;
-}
-
-/* Entradas de texto, números, datas, horários e áreas de texto */
-.stTextInput input,
-.stNumberInput input,
-.stDateInput input,
-.stTimeInput input,
-.stTextArea textarea,
-[data-baseweb="input"],
-[data-baseweb="base-input"],
-[data-baseweb="textarea"] {
+[data-baseweb="input"], [data-baseweb="base-input"], [data-baseweb="textarea"] {
   background: #FFFFFF !important;
   color: var(--ink) !important;
   border: 1px solid var(--border-strong) !important;
   border-radius: 8px !important;
   box-shadow: none !important;
 }
-
-/* Contorno persistente em selects e multiselects */
 [data-baseweb="select"] > div,
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 [data-testid="stMultiSelect"] [data-baseweb="select"] > div {
@@ -206,49 +308,101 @@ input::placeholder, textarea::placeholder { color: #5A6B7E !important; opacity: 
   border-radius: 8px !important;
   box-shadow: none !important;
 }
+input::placeholder, textarea::placeholder { color: var(--muted) !important; opacity: 1; }
 
-/* Mantém o contorno ao focar, sem depender do clique para torná-lo visível */
-.stTextInput input:focus,
-.stNumberInput input:focus,
-.stDateInput input:focus,
-.stTimeInput input:focus,
-.stTextArea textarea:focus,
-[data-baseweb="input"]:focus-within,
-[data-baseweb="base-input"]:focus-within,
-[data-baseweb="textarea"]:focus-within,
-[data-baseweb="select"] > div:focus-within {
+.stTextInput input:focus, .stNumberInput input:focus, .stDateInput input:focus,
+.stTimeInput input:focus, .stTextArea textarea:focus,
+[data-baseweb="input"]:focus-within, [data-baseweb="base-input"]:focus-within,
+[data-baseweb="textarea"]:focus-within, [data-baseweb="select"] > div:focus-within {
   border-color: var(--teal) !important;
-  box-shadow: 0 0 0 1px rgba(20, 125, 120, .16) !important;
+  box-shadow: 0 0 0 3px rgba(20, 125, 120, .15) !important;
 }
 
-/* Botões de ação, download e envio de formulários */
-.stButton button,
-.stDownloadButton button,
-.stFormSubmitButton button,
-[data-testid="stFileUploader"] button,
-[data-testid="stCameraInput"] button {
-  border: 1px solid var(--border-strong) !important;
-  border-radius: 8px !important;
+/* Etiquetas selecionadas no multiselect: texto branco sobre teal (antes ficava escuro e ilegível) */
+[data-baseweb="tag"] {
+  background: var(--teal) !important;
+  border-radius: 6px !important;
 }
+[data-baseweb="tag"],
+[data-baseweb="tag"] * { color: #FFFFFF !important; }
+[data-baseweb="tag"] svg { fill: #FFFFFF !important; }
 
-/* Upload, caixas expansíveis e elementos interativos de formulário */
+/* Upload */
 [data-testid="stFileUploader"] section,
 [data-testid="stFileUploaderDropzone"] {
-  border: 1px solid var(--border-strong) !important;
+  border: 1px dashed var(--border-strong) !important;
   border-radius: 10px !important;
   background: #FFFFFF !important;
 }
 
-[data-testid="stCheckbox"] label,
-[data-testid="stRadio"] div[role="radiogroup"] > label,
-[data-testid="stToggle"] label {
-  border-color: var(--border) !important;
+/* ------------------------------------------------------------------
+   Botões
+------------------------------------------------------------------- */
+.stButton button, .stDownloadButton button, .stFormSubmitButton button,
+[data-testid="stFileUploader"] button, [data-testid="stCameraInput"] button {
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 8px !important;
+  font-weight: 650;
+  transition: background .15s ease, border-color .15s ease, color .15s ease;
+}
+.stButton button:hover, .stDownloadButton button:hover,
+.stFormSubmitButton button:hover, [data-testid="stFileUploader"] button:hover {
+  border-color: var(--teal) !important;
+  color: var(--teal-dark);
+}
+.stButton button[kind="primary"],
+.stFormSubmitButton button[kind="primary"] {
+  background: var(--teal);
+  border-color: var(--teal) !important;
+  color: #FFFFFF !important;
+}
+.stButton button[kind="primary"] *,
+.stFormSubmitButton button[kind="primary"] * { color: #FFFFFF !important; }
+.stButton button[kind="primary"]:hover,
+.stFormSubmitButton button[kind="primary"]:hover {
+  background: var(--teal-dark);
+  border-color: var(--teal-dark) !important;
+}
+.stButton button:focus-visible, .stDownloadButton button:focus-visible,
+.stFormSubmitButton button:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: 2px;
 }
 
-/* Estado hover discreto, sem ocultar o contorno no estado normal */
-.stButton button:hover,
-.stDownloadButton button:hover,
-.stFormSubmitButton button:hover,
-[data-testid="stFileUploader"] button:hover {
-  border-color: var(--teal) !important;
+/* ------------------------------------------------------------------
+   Abas
+------------------------------------------------------------------- */
+.stTabs [data-baseweb="tab-list"] {
+  gap: .25rem;
+  border-bottom: 1px solid var(--border);
+}
+.stTabs [data-baseweb="tab"] {
+  padding: .75rem 1rem;
+  font-weight: 600;
+}
+.stTabs [data-baseweb="tab"] p { color: var(--muted) !important; font-weight: 600; }
+.stTabs [data-baseweb="tab"]:hover p { color: var(--navy) !important; }
+.stTabs [aria-selected="true"] p { color: var(--teal) !important; font-weight: 700; }
+.stTabs [data-baseweb="tab-highlight"] {
+  background-color: var(--teal) !important;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+}
+
+/* ------------------------------------------------------------------
+   Mensagens
+------------------------------------------------------------------- */
+[data-testid="stAlert"] { border-radius: 10px; }
+[data-testid="stAlert"] p, [data-testid="stAlert"] span { color: var(--ink) !important; }
+
+/* ------------------------------------------------------------------
+   Responsivo e acessibilidade
+------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  .block-container { padding: 1rem .8rem 2rem; }
+  [data-testid="stMetric"] { padding: .8rem .9rem .8rem 1.2rem; }
+  .stApp [data-testid="stMain"] h1 { font-size: 1.7rem; }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
 }
