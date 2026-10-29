@@ -251,17 +251,20 @@ div[data-testid="stExpander"] summary { padding: .8rem 1rem; font-weight: 650; }
 div[data-testid="stDataFrame"] { overflow: hidden; }
 
 /* Gráficos dentro de cartões (o fundo do gráfico é transparente) */
+/* IMPORTANTE: sem padding e sem overflow:hidden. O Streamlit fixa a altura e a largura
+   do gráfico; qualquer padding aqui "come" esse espaço e corta rosca, legenda e eixos.
+   O respiro interno vem da margem do próprio gráfico (update_layout em App.py). */
 [data-testid="stPlotlyChart"],
 [data-testid="stVegaLiteChart"],
 [data-testid="stArrowVegaLiteChart"] {
-  box-sizing: border-box;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 16px;
   box-shadow: var(--shadow);
-  padding: .9rem 1rem .5rem;
-  overflow: hidden;
 }
+/* Fundo do gráfico transparente, para o cartão branco aparecer por inteiro */
+[data-testid="stPlotlyChart"] .main-svg { background: transparent !important; }
+[data-testid="stPlotlyChart"] .main-svg .bg { fill: transparent !important; }
 
 /* ------------------------------------------------------------------
    Indicadores (métricas)
