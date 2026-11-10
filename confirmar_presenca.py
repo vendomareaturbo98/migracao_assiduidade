@@ -20,6 +20,55 @@ st.set_page_config(
 inicializar_banco()
 
 
+@st.cache_resource(show_spinner=False)
+def garantir_colunas_dois_dias():
+    """Garante as colunas do recurso "treinamento em dois dias".
+
+    É o mesmo ajuste feito pelo App.py (ADD COLUMN IF NOT EXISTS), repetido aqui
+    para este aplicativo funcionar mesmo se for publicado antes do administrativo.
+    Não apaga nem altera dados existentes.
+    """
+    with conectar() as conn:
+        conn.execute("ALTER TABLE treinamentos ADD COLUMN IF NOT EXISTS data_dia2 TEXT", ())
+        conn.execute("ALTER TABLE presencas ADD COLUMN IF NOT EXISTS presente_dia1 INTEGER", ())
+        conn.execute("ALTER TABLE presencas ADD COLUMN IF NOT EXISTS presente_dia2 INTEGER", ())
+    return True
+
+
+try:
+    garantir_colunas_dois_dias()
+except (psycopg2.Error, RuntimeError) as erro:
+    st.error(f"Não foi possível preparar o banco de dados: {erro}")
+    st.stop()
+
+
+# ======================================================
+# REGRAS DE DIA E PRESENÇA
+# ======================================================
+
+def dia_do_treinamento(data, data_dia2, hoje):
+    """Retorna 1 se hoje é o 1º dia, 2 se hoje é o 2º dia e 0 caso contrário."""
+    if str(data or "")[:10] == hoje:
+        return 1
+    if data_dia2 and str(data_dia2)[:10] == hoje:
+        return 2
+    return 0
+
+
+def presenca_por_dia(presente, presente_dia1, presente_dia2):
+    """Devolve (presente_no_dia1, presente_no_dia2).
+
+    Registros feitos antes do recurso de dois dias têm presente_dia1 vazio;
+    nesse caso a presença vale para o 1º dia.
+    """
+    dia2 = presente_dia2 == 1
+    if presente_dia1 is not None:
+        dia1 = presente_dia1 == 1
+    else:
+        dia1 = (presente == 1) and not dia2
+    return dia1, dia2
+
+
 # ======================================================
 # CONSULTAS E GRAVAÇÃO
 # ======================================================
@@ -39,93 +88,177 @@ def buscar_colaborador_por_matricula(matricula):
 
 
 def listar_treinamentos_de_hoje(colaborador_id):
+    """Treinamentos cujo 1º ou 2º dia é hoje, já com o estado da presença de hoje."""
     hoje = date.today().isoformat()
 
     with conectar() as conn:
-        return conn.execute(
+        linhas = conn.execute(
             """
             SELECT
                 t.id,
                 t.titulo,
                 t.data,
+                t.data_dia2,
                 t.hora_inicio,
                 t.hora_fim,
                 t.situacao,
-                p.presente
-            FROM elegibilidade e
-            JOIN treinamentos t
-              ON t.id = e.treinamento_id
+                p.presente,
+                p.presente_dia1,
+                p.presente_dia2
+            FROM treinamentos t
+            INNER JOIN elegibilidade e
+              ON e.treinamento_id = t.id
+             AND e.colaborador_id = ?
             LEFT JOIN presencas p
               ON p.treinamento_id = t.id
-             AND p.colaborador_id = e.colaborador_id
-            WHERE e.colaborador_id = ?
-              AND t.data = ?
-              AND t.situacao <> 'Cancelado'
+             AND p.colaborador_id = ?
+            WHERE (LEFT(COALESCE(t.data, ''), 10) = ?
+                   OR LEFT(COALESCE(t.data_dia2, ''), 10) = ?)
+              AND LOWER(COALESCE(t.situacao, '')) <> 'cancelado'
             ORDER BY t.hora_inicio, t.titulo
             """,
-            (colaborador_id, hoje),
+            (colaborador_id, colaborador_id, hoje, hoje),
         ).fetchall()
+
+    treinamentos = []
+    for linha in linhas:
+        dois_dias = bool(linha["data_dia2"])
+        dia_hoje = dia_do_treinamento(linha["data"], linha["data_dia2"], hoje)
+        dia1_ok, dia2_ok = presenca_por_dia(
+            linha["presente"], linha["presente_dia1"], linha["presente_dia2"]
+        )
+        if dois_dias:
+            presente_hoje = dia1_ok if dia_hoje == 1 else dia2_ok
+            presente_outro_dia = dia2_ok if dia_hoje == 1 else dia1_ok
+        else:
+            presente_hoje = linha["presente"] == 1
+            presente_outro_dia = False
+
+        treinamentos.append({
+            "id": linha["id"],
+            "titulo": linha["titulo"],
+            "data": linha["data"],
+            "data_dia2": linha["data_dia2"],
+            "hora_inicio": linha["hora_inicio"],
+            "hora_fim": linha["hora_fim"],
+            "dois_dias": dois_dias,
+            "dia_hoje": dia_hoje,
+            "presente_hoje": presente_hoje,
+            "presente_outro_dia": presente_outro_dia,
+        })
+    return treinamentos
 
 
 def confirmar_presenca(treinamento_id, colaborador_id):
     """
     Grava a presença no banco existente.
-    Uma presença já marcada como presente não pode ser confirmada novamente.
+    Em treinamentos de dois dias, a confirmação vale para o dia de hoje e a
+    presença em qualquer um dos dias conta como presente no treinamento.
+    Uma presença já registrada para o dia de hoje não pode ser confirmada
+    novamente.
     """
+    hoje = date.today().isoformat()
+
     with conectar() as conn:
         # Revalida os requisitos no momento da gravação, evitando confiar
         # apenas nos dados que foram exibidos anteriormente na página.
         registro = conn.execute(
             """
-            SELECT t.id, t.situacao, t.data, c.ativo
+            SELECT t.id, t.situacao, t.data, t.data_dia2, c.ativo
             FROM treinamentos t
-            JOIN elegibilidade e ON e.treinamento_id = t.id
-            JOIN colaboradores c ON c.id = e.colaborador_id
+            JOIN colaboradores c ON c.id = ?
+            JOIN elegibilidade e
+              ON e.treinamento_id = t.id
+             AND e.colaborador_id = c.id
             WHERE t.id = ?
-              AND c.id = ?
             """,
-            (treinamento_id, colaborador_id),
+            (colaborador_id, treinamento_id),
         ).fetchone()
 
         if registro is None:
-            return False, "Este colaborador não está elegível para o treinamento."
+            return False, (
+                "Este treinamento não está disponível para sua matrícula. "
+                "Confirme com o responsável se você está na lista de elegibilidade."
+            )
 
         if registro["ativo"] != 1:
             return False, "O cadastro deste colaborador não está ativo."
 
-        if registro["situacao"] == "Cancelado":
+        if str(registro["situacao"] or "").strip().lower() == "cancelado":
             return False, "Este treinamento foi cancelado."
 
-        if registro["data"] != date.today().isoformat():
+        dia = dia_do_treinamento(registro["data"], registro["data_dia2"], hoje)
+        if dia == 0:
             return False, "A confirmação só está disponível na data do treinamento."
 
         atual = conn.execute(
             """
-            SELECT presente
+            SELECT presente, presente_dia1, presente_dia2
             FROM presencas
             WHERE treinamento_id = ? AND colaborador_id = ?
             """,
             (treinamento_id, colaborador_id),
         ).fetchone()
 
-        if atual is not None and atual["presente"] == 1:
-            return False, "A presença deste treinamento já foi registrada."
+        dois_dias = bool(registro["data_dia2"])
+
+        if not dois_dias:
+            if atual is not None and atual["presente"] == 1:
+                return False, "A presença deste treinamento já foi registrada."
+
+            conn.execute(
+                """
+                INSERT INTO presencas
+                    (treinamento_id, colaborador_id, presente, observacao,
+                     atualizado_em)
+                VALUES (?, ?, 1, '', CURRENT_TIMESTAMP::text)
+                ON CONFLICT(treinamento_id, colaborador_id)
+                DO UPDATE SET
+                    presente = 1,
+                    atualizado_em = CURRENT_TIMESTAMP::text
+                """,
+                (treinamento_id, colaborador_id),
+            )
+            return True, "Presença confirmada com sucesso!"
+
+        # Treinamento em dois dias: registra o dia de hoje sem apagar o outro.
+        if atual is None:
+            dia1_ok = dia2_ok = False
+        else:
+            dia1_ok, dia2_ok = presenca_por_dia(
+                atual["presente"], atual["presente_dia1"], atual["presente_dia2"]
+            )
+
+        if (dia == 1 and dia1_ok) or (dia == 2 and dia2_ok):
+            return False, "A presença deste dia do treinamento já foi registrada."
+
+        if dia == 1:
+            dia1_ok = True
+        else:
+            dia2_ok = True
 
         conn.execute(
             """
             INSERT INTO presencas
-                (treinamento_id, colaborador_id, presente, observacao,
-                 atualizado_em)
-            VALUES (?, ?, 1, '', CURRENT_TIMESTAMP::text)
+                (treinamento_id, colaborador_id, presente, presente_dia1,
+                 presente_dia2, observacao, atualizado_em)
+            VALUES (?, ?, 1, ?, ?, '', CURRENT_TIMESTAMP::text)
             ON CONFLICT(treinamento_id, colaborador_id)
             DO UPDATE SET
                 presente = 1,
+                presente_dia1 = excluded.presente_dia1,
+                presente_dia2 = excluded.presente_dia2,
                 atualizado_em = CURRENT_TIMESTAMP::text
             """,
-            (treinamento_id, colaborador_id),
+            (
+                treinamento_id,
+                colaborador_id,
+                1 if dia1_ok else 0,
+                1 if dia2_ok else 0,
+            ),
         )
 
-    return True, "Presença confirmada com sucesso!"
+    return True, f"Presença do {dia}º dia confirmada com sucesso!"
 
 
 # ======================================================
@@ -135,8 +268,8 @@ def confirmar_presenca(treinamento_id, colaborador_id):
 st.title("✅ Confirmação de presença")
 st.caption("Sistema de Assiduidade | Educação Continuada")
 st.write(
-    "Informe sua matrícula para consultar os treinamentos de hoje "
-    "em que você está inscrito."
+    "Informe sua matrícula para consultar os treinamentos de hoje para os "
+    "quais você está cadastrado como elegível."
 )
 
 if "colaborador_confirmacao" not in st.session_state:
@@ -197,8 +330,8 @@ if colaborador:
 
         if not treinamentos:
             st.info(
-                "Não há treinamentos disponíveis para confirmação hoje "
-                "no seu cadastro."
+                "Não há treinamentos elegíveis para sua matrícula com confirmação "
+                "disponível hoje."
             )
         else:
             st.write("**Treinamentos disponíveis hoje**")
@@ -210,13 +343,29 @@ if colaborador:
                         f"Horário: {treinamento['hora_inicio']}–"
                         f"{treinamento['hora_fim']}"
                     )
+                    if treinamento["dois_dias"]:
+                        st.caption(
+                            f"Treinamento em dois dias "
+                            f"({str(treinamento['data'])[:10]} e "
+                            f"{str(treinamento['data_dia2'])[:10]}). "
+                            f"Hoje é o {treinamento['dia_hoje']}º dia."
+                        )
 
-                    if treinamento["presente"] == 1:
-                        st.success("Sua presença já foi registrada.")
+                    if treinamento["presente_hoje"]:
+                        st.success("Sua presença de hoje já foi registrada.")
                     else:
+                        if treinamento["presente_outro_dia"]:
+                            st.info(
+                                "Você já tem presença registrada no outro dia "
+                                "deste treinamento, então não será contado como "
+                                "ausente. Confirmar hoje é opcional."
+                            )
                         botao = st.button(
                             "Confirmar minha presença",
-                            key=f"confirmar_{treinamento['id']}_{colaborador['id']}",
+                            key=(
+                                f"confirmar_{treinamento['id']}_"
+                                f"{colaborador['id']}_{treinamento['dia_hoje']}"
+                            ),
                             use_container_width=True,
                         )
 
