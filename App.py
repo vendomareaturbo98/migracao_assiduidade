@@ -159,26 +159,37 @@ def listar_treinamentos():
 
 
 def carregar_participacoes_dashboard():
-    """Carrega cada elegibilidade com seu estado de presença para o painel."""
+    """Carrega elegíveis e participantes incluídos manualmente na presença."""
     return consultar("""
-        SELECT
-            t.id AS treinamento_id,
-            t.titulo AS treinamento,
-            t.data,
-            t.situacao,
-            c.id AS colaborador_id,
-            c.nome,
-            c.matricula,
-            c.cargo,
-            p.presente
-        FROM elegibilidade e
-        JOIN treinamentos t ON t.id = e.treinamento_id
-        JOIN colaboradores c ON c.id = e.colaborador_id
-        LEFT JOIN presencas p
-            ON p.treinamento_id = t.id
-            AND p.colaborador_id = c.id
-        WHERE c.ativo = 1
-        ORDER BY t.data, t.hora_inicio, t.titulo, c.nome
+        SELECT * FROM (
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
+                c.cargo, p.presente
+            FROM elegibilidade e
+            JOIN treinamentos t ON t.id = e.treinamento_id
+            JOIN colaboradores c ON c.id = e.colaborador_id
+            LEFT JOIN presencas p
+                ON p.treinamento_id = t.id AND p.colaborador_id = c.id
+            WHERE c.ativo = 1
+
+            UNION ALL
+
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
+                c.cargo, p.presente
+            FROM presencas p
+            JOIN treinamentos t ON t.id = p.treinamento_id
+            JOIN colaboradores c ON c.id = p.colaborador_id
+            WHERE c.ativo = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM elegibilidade e
+                  WHERE e.treinamento_id = p.treinamento_id
+                    AND e.colaborador_id = p.colaborador_id
+              )
+        ) participacoes
+        ORDER BY data, treinamento, nome
     """)
 
 
@@ -1066,8 +1077,11 @@ elif menu == "Presenças":
         (tid,),
     )
     if elegiveis.empty:
-        st.warning("Este treinamento não tem colaboradores elegíveis ativos.")
-        st.stop()
+        st.info(
+            "Este treinamento não possui colaboradores elegíveis ativos. "
+            "Você ainda poderá incluir participantes pela opção de presença manual, "
+            "quando o treinamento estiver como Realizado."
+        )
     if treinamento["situacao"] == "Cancelado":
         st.warning("Este treinamento está cancelado. Não é possível registrar presenças.")
         st.stop()
@@ -1195,6 +1209,99 @@ elif menu == "Presenças":
                     "Verifique os logs do aplicativo."
                 )
 
+    st.divider()
+    st.subheader("Adicionar presença manualmente")
+    st.caption(
+        "Use esta opção para incluir um colaborador ativo que participou do "
+        "treinamento, mesmo que ele não esteja na lista de elegibilidade. "
+        "O lançamento manual não altera a lista de elegibilidade."
+    )
+
+    if treinamento["situacao"] != "Realizado":
+        st.info("O lançamento manual fica disponível para treinamentos com situação Realizado.")
+    else:
+        colaboradores_ativos = listar_colaboradores(ativos=True)
+        if colaboradores_ativos.empty:
+            st.warning("Não há colaboradores ativos cadastrados.")
+        else:
+            opcoes_manuais = {
+                f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"} | {r["cargo"] or "Cargo não informado"}': int(r["id"])
+                for _, r in colaboradores_ativos.iterrows()
+            }
+            with st.form(f"form_presenca_manual_{tid}"):
+                colaborador_manual = st.selectbox(
+                    "Colaborador", list(opcoes_manuais.keys()),
+                    key=f"colaborador_manual_{tid}",
+                )
+                if dois_dias:
+                    dia_manual = st.radio(
+                        "Dia em que esteve presente",
+                        options=["1º dia", "2º dia"], horizontal=True,
+                        key=f"dia_manual_{tid}",
+                    )
+                else:
+                    dia_manual = "Treinamento de um dia"
+                    st.caption(f"Data do treinamento: {str(treinamento['data'])[:10]}")
+                confirmar_manual = st.form_submit_button(
+                    "Registrar presença manual", use_container_width=True
+                )
+
+            if confirmar_manual:
+                cid_manual = opcoes_manuais[colaborador_manual]
+                try:
+                    with conectar() as conn:
+                        if dois_dias:
+                            registro = conn.execute(
+                                """SELECT presente, presente_dia1, presente_dia2
+                                   FROM presencas
+                                   WHERE treinamento_id = ? AND colaborador_id = ?""",
+                                (tid, cid_manual),
+                            ).fetchone()
+                            if registro:
+                                p1_atual = registro["presente_dia1"]
+                                p2_atual = registro["presente_dia2"]
+                                if pd.isna(p1_atual):
+                                    p1_atual = 1 if registro["presente"] == 1 else 0
+                                if pd.isna(p2_atual):
+                                    p2_atual = 0
+                                p1_atual, p2_atual = int(p1_atual), int(p2_atual)
+                            else:
+                                p1_atual = p2_atual = 0
+                            if dia_manual == "1º dia":
+                                p1_atual = 1
+                            else:
+                                p2_atual = 1
+                            conn.execute(
+                                """INSERT INTO presencas
+                                   (treinamento_id, colaborador_id, presente,
+                                    presente_dia1, presente_dia2)
+                                   VALUES (?, ?, 1, ?, ?)
+                                   ON CONFLICT(treinamento_id, colaborador_id)
+                                   DO UPDATE SET presente = 1,
+                                     presente_dia1 = excluded.presente_dia1,
+                                     presente_dia2 = excluded.presente_dia2,
+                                     atualizado_em = CURRENT_TIMESTAMP::text""",
+                                (tid, cid_manual, p1_atual, p2_atual),
+                            )
+                        else:
+                            conn.execute(
+                                """INSERT INTO presencas
+                                   (treinamento_id, colaborador_id, presente)
+                                   VALUES (?, ?, 1)
+                                   ON CONFLICT(treinamento_id, colaborador_id)
+                                   DO UPDATE SET presente = 1,
+                                     presente_dia1 = NULL, presente_dia2 = NULL,
+                                     atualizado_em = CURRENT_TIMESTAMP::text""",
+                                (tid, cid_manual),
+                            )
+                    st.success("Presença manual registrada com sucesso.")
+                    st.rerun()
+                except Exception:
+                    st.error(
+                        "Não foi possível registrar a presença manual. "
+                        "Verifique os logs do aplicativo."
+                    )
+
     if treinamento["situacao"] != "Realizado":
         st.info(
             "Para contabilizar ausências, altere o status para Realizado "
@@ -1209,24 +1316,35 @@ elif menu == "Presenças":
 elif menu == "Relatórios":
     st.header("Relatórios de assiduidade")
     resumo = consultar("""
-        SELECT
-            t.id AS treinamento_id,
-            t.titulo AS treinamento,
-            t.data,
-            COALESCE(t.data_dia2, t.data::text) AS data_fim,
-            t.situacao,
-            c.nome,
-            c.matricula,
-            c.cargo,
-            p.presente
-        FROM elegibilidade e
-        JOIN treinamentos t ON t.id = e.treinamento_id
-        JOIN colaboradores c ON c.id = e.colaborador_id
-        LEFT JOIN presencas p
-            ON p.treinamento_id = t.id
-            AND p.colaborador_id = c.id
-        WHERE c.ativo = 1
-        ORDER BY t.data DESC, t.titulo, c.nome
+        SELECT * FROM (
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                t.situacao, c.nome, c.matricula, c.cargo, p.presente
+            FROM elegibilidade e
+            JOIN treinamentos t ON t.id = e.treinamento_id
+            JOIN colaboradores c ON c.id = e.colaborador_id
+            LEFT JOIN presencas p
+                ON p.treinamento_id = t.id AND p.colaborador_id = c.id
+            WHERE c.ativo = 1
+
+            UNION ALL
+
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                t.situacao, c.nome, c.matricula, c.cargo, p.presente
+            FROM presencas p
+            JOIN treinamentos t ON t.id = p.treinamento_id
+            JOIN colaboradores c ON c.id = p.colaborador_id
+            WHERE c.ativo = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM elegibilidade e
+                  WHERE e.treinamento_id = p.treinamento_id
+                    AND e.colaborador_id = p.colaborador_id
+              )
+        ) participacoes
+        ORDER BY data DESC, treinamento, nome
     """)
 
     if resumo.empty:
