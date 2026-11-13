@@ -272,6 +272,41 @@ def listar_treinamentos():
     """)
 
 
+def aplicar_afastamentos(dados):
+    """Classifica como Afastado quem não compareceu e tinha afastamento na data."""
+    base = dados.copy()
+    if base.empty or not {"colaborador_id", "data", "data_fim", "resultado"}.issubset(base.columns):
+        return base
+    afastamentos = consultar("""
+        SELECT colaborador_id, data_inicio, data_fim
+        FROM afastamentos
+        WHERE ativo = 1
+    """)
+    base["afastado"] = False
+    if afastamentos.empty:
+        return base
+    afastamentos["data_inicio"] = pd.to_datetime(afastamentos["data_inicio"], errors="coerce").dt.date
+    afastamentos["data_fim"] = pd.to_datetime(afastamentos["data_fim"], errors="coerce").dt.date
+    for indice, linha in base.iterrows():
+        if linha.get("resultado") != "Ausente":
+            continue
+        cid = int(linha["colaborador_id"])
+        datas_treinamento = {
+            pd.to_datetime(linha["data"], errors="coerce").date()
+            if pd.notna(pd.to_datetime(linha["data"], errors="coerce")) else None,
+            pd.to_datetime(linha["data_fim"], errors="coerce").date()
+            if pd.notna(pd.to_datetime(linha["data_fim"], errors="coerce")) else None,
+        } - {None}
+        registros = afastamentos[afastamentos["colaborador_id"] == cid]
+        for _, afastamento in registros.iterrows():
+            inicio, fim = afastamento["data_inicio"], afastamento["data_fim"]
+            if inicio and fim and any(inicio <= data <= fim for data in datas_treinamento):
+                base.at[indice, "resultado"] = "Afastado"
+                base.at[indice, "afastado"] = True
+                break
+    return base
+
+
 def carregar_participacoes_dashboard():
     """Carrega elegíveis e participantes incluídos manualmente na presença."""
     return consultar("""
@@ -327,7 +362,7 @@ def exibir_visao_geral():
     """Mostra o painel interativo de acompanhamento da educação continuada."""
     colaboradores = listar_colaboradores()
     treinamentos = listar_treinamentos()
-    participacoes = classificar_resultados(carregar_participacoes_dashboard())
+    participacoes = aplicar_afastamentos(classificar_resultados(carregar_participacoes_dashboard()))
 
     st.subheader("Painel de acompanhamento")
     st.caption(
@@ -724,6 +759,7 @@ def carregar_relatorio_interno():
         & (dados["presente"].isna() | (dados["presente"] == 0)),
         "resultado",
     ] = "Ausente"
+    dados = aplicar_afastamentos(dados)
     return dados
 
 
@@ -1280,7 +1316,7 @@ st.caption("Educação Continuada | Banco de dados PostgreSQL na nuvem")
 
 menu = st.sidebar.radio(
     "Navegação",
-    ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Histórico individual", "Relatórios"],
+    ["Visão geral", "Colaboradores", "Afastamentos", "Treinamentos", "Presenças", "Histórico individual", "Relatórios"],
 )
 
 
@@ -1301,150 +1337,338 @@ if menu == "Visão geral":
 # ======================================================
 
 elif menu == "Colaboradores":
-    st.header("Cadastro de colaboradores")
+    st.header("Cadastro e gerenciamento de colaboradores")
+    aba_importacao, aba_gerenciamento = st.tabs(["Importar planilha", "Incluir / editar / excluir"])
 
-    with st.expander("Importar planilha Excel ou CSV", expanded=True):
-        arquivo = st.file_uploader(
-            "Selecione a planilha", type=["xlsx", "xls", "csv"],
-            key="planilha_colaboradores",
-        )
-        aba = None
-        if arquivo and arquivo.name.lower().endswith((".xlsx", ".xls")):
-            try:
-                abas = pd.ExcelFile(arquivo).sheet_names
-                if len(abas) > 1:
-                    aba = st.selectbox("Aba da planilha", abas)
-            except Exception:
-                st.error("Não foi possível listar as abas da planilha.")
+    with aba_importacao:
 
-        if arquivo and st.button("Analisar planilha"):
-            try:
-                original, importaveis, excluidos, ambiguos = preparar_planilha(
-                    arquivo, aba
-                )
-                st.session_state["importaveis"] = importaveis
-                st.session_state["excluidos"] = original[
-                    original.index.isin(excluidos)
-                ]
-                st.session_state["ambiguos"] = original[
-                    original.index.isin(ambiguos)
-                ]
-                st.success(
-                    f"{len(importaveis)} registro(s) pronto(s) para importar."
-                )
-            except Exception as erro:
-                st.error(f"Não foi possível analisar a planilha: {erro}")
-
-        if "importaveis" in st.session_state:
-            st.write("Prévia dos registros importáveis")
-            st.dataframe(
-                st.session_state["importaveis"][
-                    ["Nome", "Matrícula", "Cargo Efetivo"]
-                ],
-                hide_index=True,
-                use_container_width=True,
+        with st.expander("Importar planilha Excel ou CSV", expanded=True):
+            arquivo = st.file_uploader(
+                "Selecione a planilha", type=["xlsx", "xls", "csv"],
+                key="planilha_colaboradores",
             )
-            if not st.session_state["excluidos"].empty:
-                st.warning("Registros RJU que serão excluídos pela regra de duplicidade:")
-                st.dataframe(
-                    st.session_state["excluidos"][
-                        ["Nome", "Matrícula", "Cargo Efetivo"]
-                    ],
-                    hide_index=True,
-                    use_container_width=True,
-                )
-            if not st.session_state["ambiguos"].empty:
-                st.warning(
-                    "Há nomes duplicados sem alternativa não RJU. "
-                    "Esses registros não serão importados automaticamente."
-                )
-                st.dataframe(
-                    st.session_state["ambiguos"][
-                        ["Nome", "Matrícula", "Cargo Efetivo"]
-                    ],
-                    hide_index=True,
-                    use_container_width=True,
-                )
+            aba = None
+            if arquivo and arquivo.name.lower().endswith((".xlsx", ".xls")):
+                try:
+                    abas = pd.ExcelFile(arquivo).sheet_names
+                    if len(abas) > 1:
+                        aba = st.selectbox("Aba da planilha", abas)
+                except Exception:
+                    st.error("Não foi possível listar as abas da planilha.")
 
-            if st.button("Confirmar importação no banco"):
-                base = st.session_state["importaveis"]
-                inseridos = 0
-                atualizados = 0
+            if arquivo and st.button("Analisar planilha"):
+                try:
+                    original, importaveis, excluidos, ambiguos = preparar_planilha(
+                        arquivo, aba
+                    )
+                    st.session_state["importaveis"] = importaveis
+                    st.session_state["excluidos"] = original[
+                        original.index.isin(excluidos)
+                    ]
+                    st.session_state["ambiguos"] = original[
+                        original.index.isin(ambiguos)
+                    ]
+                    st.success(
+                        f"{len(importaveis)} registro(s) pronto(s) para importar."
+                    )
+                except Exception as erro:
+                    st.error(f"Não foi possível analisar a planilha: {erro}")
+
+            if "importaveis" in st.session_state:
+                st.write("Prévia dos registros importáveis")
+                st.dataframe(
+                    st.session_state["importaveis"][
+                        ["Nome", "Matrícula", "Cargo Efetivo"]
+                    ],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+                if not st.session_state["excluidos"].empty:
+                    st.warning("Registros RJU que serão excluídos pela regra de duplicidade:")
+                    st.dataframe(
+                        st.session_state["excluidos"][
+                            ["Nome", "Matrícula", "Cargo Efetivo"]
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+                if not st.session_state["ambiguos"].empty:
+                    st.warning(
+                        "Há nomes duplicados sem alternativa não RJU. "
+                        "Esses registros não serão importados automaticamente."
+                    )
+                    st.dataframe(
+                        st.session_state["ambiguos"][
+                            ["Nome", "Matrícula", "Cargo Efetivo"]
+                        ],
+                        hide_index=True,
+                        use_container_width=True,
+                    )
+
+                if st.button("Confirmar importação no banco"):
+                    base = st.session_state["importaveis"]
+                    inseridos = 0
+                    atualizados = 0
+                    try:
+                        with conectar() as conn:
+                            for _, linha in base.iterrows():
+                                chave = linha["Chave"]
+                                existente = conn.execute(
+                                    "SELECT id FROM colaboradores WHERE nome_chave = ?",
+                                    (chave,),
+                                ).fetchone()
+                                if existente:
+                                    conn.execute(
+                                        """
+                                        UPDATE colaboradores
+                                        SET nome = ?, matricula = ?, cargo = ?, ativo = 1
+                                        WHERE nome_chave = ?
+                                        """,
+                                        (
+                                            linha["Nome"], linha["Matrícula"],
+                                            linha["Cargo Efetivo"], chave,
+                                        ),
+                                    )
+                                    atualizados += 1
+                                else:
+                                    conn.execute(
+                                        """
+                                        INSERT INTO colaboradores
+                                        (nome, nome_chave, matricula, cargo)
+                                        VALUES (?, ?, ?, ?)
+                                        """,
+                                        (
+                                            linha["Nome"], chave, linha["Matrícula"],
+                                            linha["Cargo Efetivo"],
+                                        ),
+                                    )
+                                    inseridos += 1
+                        st.success(
+                            f"Importação concluída: {inseridos} novos; "
+                            f"{atualizados} atualizados."
+                        )
+                        for chave in ["importaveis", "excluidos", "ambiguos"]:
+                            st.session_state.pop(chave, None)
+                        st.rerun()
+                    except Exception:
+                        st.error(
+                            "Não foi possível concluir a importação. "
+                            "Verifique os logs do aplicativo."
+                        )
+
+        st.divider()
+        st.subheader("Base salva no banco")
+        colaboradores = listar_colaboradores(ativos=False)
+        if colaboradores.empty:
+            st.info("Nenhum colaborador cadastrado.")
+        else:
+            busca = st.text_input("Buscar por nome, matrícula ou cargo")
+            if busca:
+                mascara = (
+                    colaboradores["nome"].fillna("").str.contains(
+                        busca, case=False, na=False, regex=False
+                    )
+                    | colaboradores["matricula"].fillna("").str.contains(
+                        busca, case=False, na=False, regex=False
+                    )
+                    | colaboradores["cargo"].fillna("").str.contains(
+                        busca, case=False, na=False, regex=False
+                    )
+                )
+                colaboradores = colaboradores[mascara]
+            st.dataframe(colaboradores, hide_index=True, use_container_width=True)
+            csv = colaboradores.to_csv(index=False, sep=";", encoding="utf-8-sig")
+            st.download_button(
+                "Exportar colaboradores em CSV",
+                data=csv,
+                file_name="colaboradores.csv",
+                mime="text/csv",
+            )
+
+
+    with aba_gerenciamento:
+        st.subheader("Incluir colaborador manualmente")
+        with st.form("form_incluir_colaborador"):
+            nome_novo = st.text_input("Nome completo")
+            matricula_nova = st.text_input("Matrícula")
+            cargo_novo = st.text_input("Cargo efetivo")
+            incluir_colaborador = st.form_submit_button("Incluir colaborador")
+        if incluir_colaborador:
+            chave_nova = normalizar(nome_novo)
+            if not nome_novo.strip():
+                st.error("Informe o nome do colaborador.")
+            elif not cargo_novo.strip():
+                st.error("Informe o cargo efetivo.")
+            else:
                 try:
                     with conectar() as conn:
-                        for _, linha in base.iterrows():
-                            chave = linha["Chave"]
-                            existente = conn.execute(
-                                "SELECT id FROM colaboradores WHERE nome_chave = ?",
-                                (chave,),
+                        existente = conn.execute(
+                            "SELECT id FROM colaboradores WHERE nome_chave = ?",
+                            (chave_nova,),
+                        ).fetchone()
+                        if existente:
+                            st.warning("Já existe um colaborador com esse nome normalizado. Revise a base antes de incluir.")
+                        else:
+                            conn.execute(
+                                """INSERT INTO colaboradores
+                                   (nome, nome_chave, matricula, cargo, ativo)
+                                   VALUES (?, ?, ?, ?, 1)""",
+                                (nome_novo.strip(), chave_nova, matricula_nova.strip(), cargo_novo.strip()),
+                            )
+                            st.success("Colaborador incluído com sucesso.")
+                            st.rerun()
+                except Exception:
+                    st.error("Não foi possível incluir o colaborador. Verifique os logs.")
+
+        st.divider()
+        st.subheader("Editar ou excluir colaborador")
+        base_colaboradores = listar_colaboradores(ativos=False)
+        if base_colaboradores.empty:
+            st.info("Não há colaboradores cadastrados.")
+        else:
+            opcoes_colaboradores = {
+                f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"} | {"Ativo" if int(r["ativo"]) == 1 else "Inativo"}': int(r["id"])
+                for _, r in base_colaboradores.sort_values("nome").iterrows()
+            }
+            escolhido = st.selectbox("Selecione o colaborador", list(opcoes_colaboradores), key="gerenciar_colaborador")
+            registro = base_colaboradores[base_colaboradores["id"] == opcoes_colaboradores[escolhido]].iloc[0]
+            with st.form("form_editar_colaborador"):
+                nome_editar = st.text_input("Nome", value=str(registro["nome"]))
+                matricula_editar = st.text_input("Matrícula", value=str(registro["matricula"] or ""))
+                cargo_editar = st.text_input("Cargo efetivo", value=str(registro["cargo"] or ""))
+                salvar_edicao = st.form_submit_button("Salvar alterações")
+            if salvar_edicao:
+                chave_editar = normalizar(nome_editar)
+                if not nome_editar.strip() or not cargo_editar.strip():
+                    st.error("Nome e cargo são obrigatórios.")
+                else:
+                    try:
+                        with conectar() as conn:
+                            duplicado = conn.execute(
+                                "SELECT id FROM colaboradores WHERE nome_chave = ? AND id <> ?",
+                                (chave_editar, int(registro["id"])),
                             ).fetchone()
-                            if existente:
-                                conn.execute(
-                                    """
-                                    UPDATE colaboradores
-                                    SET nome = ?, matricula = ?, cargo = ?, ativo = 1
-                                    WHERE nome_chave = ?
-                                    """,
-                                    (
-                                        linha["Nome"], linha["Matrícula"],
-                                        linha["Cargo Efetivo"], chave,
-                                    ),
-                                )
-                                atualizados += 1
+                            if duplicado:
+                                st.error("Já existe outro colaborador com esse nome.")
                             else:
                                 conn.execute(
-                                    """
-                                    INSERT INTO colaboradores
-                                    (nome, nome_chave, matricula, cargo)
-                                    VALUES (?, ?, ?, ?)
-                                    """,
-                                    (
-                                        linha["Nome"], chave, linha["Matrícula"],
-                                        linha["Cargo Efetivo"],
-                                    ),
+                                    """UPDATE colaboradores
+                                       SET nome = ?, nome_chave = ?, matricula = ?, cargo = ?
+                                       WHERE id = ?""",
+                                    (nome_editar.strip(), chave_editar, matricula_editar.strip(), cargo_editar.strip(), int(registro["id"])),
                                 )
-                                inseridos += 1
-                    st.success(
-                        f"Importação concluída: {inseridos} novos; "
-                        f"{atualizados} atualizados."
-                    )
-                    for chave in ["importaveis", "excluidos", "ambiguos"]:
-                        st.session_state.pop(chave, None)
+                                st.success("Cadastro atualizado.")
+                                st.rerun()
+                    except Exception:
+                        st.error("Não foi possível atualizar o cadastro. Verifique os logs.")
+
+            if int(registro["ativo"]) == 1:
+                if st.button("Excluir / inativar colaborador", type="secondary"):
+                    with conectar() as conn:
+                        conn.execute("UPDATE colaboradores SET ativo = 0 WHERE id = ?", (int(registro["id"]),))
+                    st.success("Colaborador inativado. O histórico de treinamentos e presenças foi preservado.")
+                    st.rerun()
+            else:
+                if st.button("Reativar colaborador", type="primary"):
+                    with conectar() as conn:
+                        conn.execute("UPDATE colaboradores SET ativo = 1 WHERE id = ?", (int(registro["id"]),))
+                    st.success("Colaborador reativado.")
+                    st.rerun()
+
+
+# ======================================================
+# AFASTAMENTOS
+# ======================================================
+
+elif menu == "Afastamentos":
+    st.header("Registro de afastamentos")
+    st.caption("Cadastre períodos de afastamento para que ausências em treinamentos coincidentes não sejam contabilizadas como falta.")
+    tipos_afastamento = [
+        "Afastamento médico", "Férias", "Licença-maternidade",
+        "Licença-paternidade", "Licença por motivo familiar",
+        "Licença para capacitação", "Licença por casamento",
+        "Licença por falecimento de familiar", "Outro afastamento legal",
+    ]
+    ativos = listar_colaboradores(ativos=True)
+    if ativos.empty:
+        st.info("Cadastre colaboradores ativos antes de registrar afastamentos.")
+    else:
+        opcoes = {
+            f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"}': int(r["id"])
+            for _, r in ativos.sort_values("nome").iterrows()
+        }
+        with st.form("form_novo_afastamento"):
+            colaborador_afastado = st.selectbox("Colaborador", list(opcoes))
+            tipo_afastamento = st.selectbox("Tipo de afastamento", tipos_afastamento)
+            tipo_personalizado = st.text_input("Se selecionou 'Outro afastamento legal', especifique")
+            col_inicio, col_fim = st.columns(2)
+            with col_inicio:
+                inicio_afastamento = st.date_input("Data de início", value=date.today())
+            with col_fim:
+                fim_afastamento = st.date_input("Data de término", value=date.today())
+            observacoes_afastamento = st.text_area("Observações administrativas (não informe diagnóstico ou CID)")
+            salvar_afastamento = st.form_submit_button("Registrar afastamento")
+        if salvar_afastamento:
+            tipo_final = tipo_personalizado.strip() if tipo_afastamento == "Outro afastamento legal" else tipo_afastamento
+            if fim_afastamento < inicio_afastamento:
+                st.error("A data final não pode ser anterior à data inicial.")
+            elif not tipo_final:
+                st.error("Informe o tipo de afastamento.")
+            else:
+                try:
+                    with conectar() as conn:
+                        conn.execute(
+                            """INSERT INTO afastamentos
+                               (colaborador_id, tipo, data_inicio, data_fim, observacoes, ativo)
+                               VALUES (?, ?, ?, ?, ?, 1)""",
+                            (opcoes[colaborador_afastado], tipo_final, inicio_afastamento.isoformat(), fim_afastamento.isoformat(), observacoes_afastamento.strip()),
+                        )
+                    st.success("Afastamento registrado.")
                     st.rerun()
                 except Exception:
-                    st.error(
-                        "Não foi possível concluir a importação. "
-                        "Verifique os logs do aplicativo."
-                    )
+                    st.error("Não foi possível registrar o afastamento. Verifique os logs.")
 
     st.divider()
-    st.subheader("Base salva no banco")
-    colaboradores = listar_colaboradores(ativos=False)
-    if colaboradores.empty:
-        st.info("Nenhum colaborador cadastrado.")
+    st.subheader("Afastamentos registrados")
+    registros_afastamentos = consultar("""
+        SELECT a.id, c.nome AS colaborador, c.matricula, a.tipo,
+               a.data_inicio, a.data_fim, a.observacoes, a.ativo
+        FROM afastamentos a
+        JOIN colaboradores c ON c.id = a.colaborador_id
+        ORDER BY a.data_inicio DESC, c.nome
+    """)
+    if registros_afastamentos.empty:
+        st.info("Nenhum afastamento registrado.")
     else:
-        busca = st.text_input("Buscar por nome, matrícula ou cargo")
-        if busca:
-            mascara = (
-                colaboradores["nome"].fillna("").str.contains(
-                    busca, case=False, na=False, regex=False
-                )
-                | colaboradores["matricula"].fillna("").str.contains(
-                    busca, case=False, na=False, regex=False
-                )
-                | colaboradores["cargo"].fillna("").str.contains(
-                    busca, case=False, na=False, regex=False
-                )
-            )
-            colaboradores = colaboradores[mascara]
-        st.dataframe(colaboradores, hide_index=True, use_container_width=True)
-        csv = colaboradores.to_csv(index=False, sep=";", encoding="utf-8-sig")
-        st.download_button(
-            "Exportar colaboradores em CSV",
-            data=csv,
-            file_name="colaboradores.csv",
-            mime="text/csv",
+        exibir_afastamentos = registros_afastamentos.copy()
+        exibir_afastamentos["Status"] = exibir_afastamentos["ativo"].map({1: "Ativo", 0: "Encerrado"})
+        st.dataframe(
+            exibir_afastamentos[["colaborador", "matricula", "tipo", "data_inicio", "data_fim", "Status", "observacoes"]].rename(columns={
+                "colaborador": "Colaborador", "matricula": "Matrícula",
+                "tipo": "Tipo", "data_inicio": "Início", "data_fim": "Término",
+                "observacoes": "Observações",
+            }),
+            hide_index=True, use_container_width=True,
         )
+        opcoes_registros = {
+            f'ID {int(r["id"])} | {r["colaborador"]} | {r["tipo"]} | {str(r["data_inicio"])[:10]} a {str(r["data_fim"])[:10]}': int(r["id"])
+            for _, r in registros_afastamentos.iterrows()
+        }
+        registro_selecionado = st.selectbox("Registro para encerrar ou reativar", list(opcoes_registros))
+        afastamento_id = opcoes_registros[registro_selecionado]
+        registro_atual = registros_afastamentos[registros_afastamentos["id"] == afastamento_id].iloc[0]
+        if int(registro_atual["ativo"]) == 1:
+            if st.button("Encerrar afastamento"):
+                with conectar() as conn:
+                    conn.execute("UPDATE afastamentos SET ativo = 0 WHERE id = ?", (afastamento_id,))
+                st.success("Afastamento encerrado.")
+                st.rerun()
+        else:
+            if st.button("Reativar afastamento"):
+                with conectar() as conn:
+                    conn.execute("UPDATE afastamentos SET ativo = 1 WHERE id = ?", (afastamento_id,))
+                st.success("Afastamento reativado.")
+                st.rerun()
 
 
 # ======================================================
