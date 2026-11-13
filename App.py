@@ -1318,7 +1318,7 @@ st.caption("Educação Continuada | Banco de dados PostgreSQL na nuvem")
 
 menu = st.sidebar.radio(
     "Navegação",
-    ["Visão geral", "Colaboradores", "Afastamentos", "Treinamentos", "Presenças", "Histórico individual", "Relatórios"],
+    ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Relatórios"],
 )
 
 
@@ -1340,7 +1340,7 @@ if menu == "Visão geral":
 
 elif menu == "Colaboradores":
     st.header("Cadastro e gerenciamento de colaboradores")
-    aba_importacao, aba_gerenciamento = st.tabs(["Importar planilha", "Incluir / editar / excluir"])
+    aba_importacao, aba_gerenciamento, aba_afastamentos = st.tabs(["Importar planilha", "Incluir / editar / excluir", "Afastamentos"])
 
     with aba_importacao:
 
@@ -1578,106 +1578,102 @@ elif menu == "Colaboradores":
                     st.rerun()
 
 
-# ======================================================
-# AFASTAMENTOS
-# ======================================================
-
-elif menu == "Afastamentos":
-    st.header("Registro de afastamentos")
-    st.caption("Cadastre períodos de afastamento para que ausências em treinamentos coincidentes não sejam contabilizadas como falta.")
-    tipos_afastamento = [
-        "Afastamento médico", "Férias", "Licença-maternidade",
-        "Licença-paternidade", "Licença por motivo familiar",
-        "Licença para capacitação", "Licença por casamento",
-        "Licença por falecimento de familiar", "Outro afastamento legal",
-    ]
-    ativos = listar_colaboradores(ativos=True)
-    if ativos.empty:
-        st.info("Cadastre colaboradores ativos antes de registrar afastamentos.")
-    else:
-        opcoes = {
-            f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"}': int(r["id"])
-            for _, r in ativos.sort_values("nome").iterrows()
-        }
-        with st.form("form_novo_afastamento"):
-            colaboradores_afastados = st.multiselect(
-                "Colaborador(es)",
-                list(opcoes),
-                help="É possível selecionar uma pessoa ou vários colaboradores para registrar o mesmo período de afastamento.",
-            )
-            tipo_afastamento = st.selectbox("Tipo de afastamento", tipos_afastamento)
-            tipo_personalizado = st.text_input("Se selecionou 'Outro afastamento legal', especifique")
-            col_inicio, col_fim = st.columns(2)
-            with col_inicio:
-                inicio_afastamento = st.date_input("Data de início", value=date.today())
-            with col_fim:
-                fim_afastamento = st.date_input("Data de término", value=date.today())
-            observacoes_afastamento = st.text_area("Observações administrativas (não informe diagnóstico ou CID)")
-            salvar_afastamento = st.form_submit_button("Registrar afastamento")
-        if salvar_afastamento:
-            tipo_final = tipo_personalizado.strip() if tipo_afastamento == "Outro afastamento legal" else tipo_afastamento
-            if not colaboradores_afastados:
-                st.error("Selecione pelo menos um colaborador.")
-            elif fim_afastamento < inicio_afastamento:
-                st.error("A data final não pode ser anterior à data inicial.")
-            elif not tipo_final:
-                st.error("Informe o tipo de afastamento.")
-            else:
-                try:
-                    with conectar() as conn:
-                        for colaborador_escolhido in colaboradores_afastados:
-                            conn.execute(
-                                """INSERT INTO afastamentos
-                                   (colaborador_id, tipo, data_inicio, data_fim, observacoes, ativo)
-                                   VALUES (?, ?, ?, ?, ?, 1)""",
-                                (opcoes[colaborador_escolhido], tipo_final, inicio_afastamento.isoformat(), fim_afastamento.isoformat(), observacoes_afastamento.strip()),
-                            )
-                    st.success(f"Afastamento registrado para {len(colaboradores_afastados)} colaborador(es).")
-                    st.rerun()
-                except Exception:
-                    st.error("Não foi possível registrar o afastamento. Verifique os logs.")
-
-    st.divider()
-    st.subheader("Afastamentos registrados")
-    registros_afastamentos = consultar("""
-        SELECT a.id, c.nome AS colaborador, c.matricula, a.tipo,
-               a.data_inicio, a.data_fim, a.observacoes, a.ativo
-        FROM afastamentos a
-        JOIN colaboradores c ON c.id = a.colaborador_id
-        ORDER BY a.data_inicio DESC, c.nome
-    """)
-    if registros_afastamentos.empty:
-        st.info("Nenhum afastamento registrado.")
-    else:
-        exibir_afastamentos = registros_afastamentos.copy()
-        exibir_afastamentos["Status"] = exibir_afastamentos["ativo"].map({1: "Ativo", 0: "Encerrado"})
-        st.dataframe(
-            exibir_afastamentos[["colaborador", "matricula", "tipo", "data_inicio", "data_fim", "Status", "observacoes"]].rename(columns={
-                "colaborador": "Colaborador", "matricula": "Matrícula",
-                "tipo": "Tipo", "data_inicio": "Início", "data_fim": "Término",
-                "observacoes": "Observações",
-            }),
-            hide_index=True, use_container_width=True,
-        )
-        opcoes_registros = {
-            f'ID {int(r["id"])} | {r["colaborador"]} | {r["tipo"]} | {str(r["data_inicio"])[:10]} a {str(r["data_fim"])[:10]}': int(r["id"])
-            for _, r in registros_afastamentos.iterrows()
-        }
-        registro_selecionado = st.selectbox("Registro para encerrar ou reativar", list(opcoes_registros))
-        afastamento_id = opcoes_registros[registro_selecionado]
-        registro_atual = registros_afastamentos[registros_afastamentos["id"] == afastamento_id].iloc[0]
-        if int(registro_atual["ativo"]) == 1:
-            if st.button("Encerrar afastamento"):
-                with conectar() as conn:
-                    conn.execute("UPDATE afastamentos SET ativo = 0 WHERE id = ?", (afastamento_id,))
-                st.success("Afastamento encerrado.")
-                st.rerun()
+    with aba_afastamentos:
+        st.header("Registro de afastamentos")
+        st.caption("Cadastre períodos de afastamento para que ausências em treinamentos coincidentes não sejam contabilizadas como falta.")
+        tipos_afastamento = [
+            "Afastamento médico", "Férias", "Licença-maternidade",
+            "Licença-paternidade", "Licença por motivo familiar",
+            "Licença para capacitação", "Licença por casamento",
+            "Licença por falecimento de familiar", "Outro afastamento legal",
+        ]
+        ativos = listar_colaboradores(ativos=True)
+        if ativos.empty:
+            st.info("Cadastre colaboradores ativos antes de registrar afastamentos.")
         else:
-            if st.button("Reativar afastamento"):
-                with conectar() as conn:
-                    conn.execute("UPDATE afastamentos SET ativo = 1 WHERE id = ?", (afastamento_id,))
-                st.success("Afastamento reativado.")
-                st.rerun()
+            opcoes = {
+                f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"}': int(r["id"])
+                for _, r in ativos.sort_values("nome").iterrows()
+            }
+            with st.form("form_novo_afastamento"):
+                colaboradores_afastados = st.multiselect(
+                    "Colaborador(es)",
+                    list(opcoes),
+                    help="É possível selecionar uma pessoa ou vários colaboradores para registrar o mesmo período de afastamento.",
+                )
+                tipo_afastamento = st.selectbox("Tipo de afastamento", tipos_afastamento)
+                tipo_personalizado = st.text_input("Se selecionou 'Outro afastamento legal', especifique")
+                col_inicio, col_fim = st.columns(2)
+                with col_inicio:
+                    inicio_afastamento = st.date_input("Data de início", value=date.today())
+                with col_fim:
+                    fim_afastamento = st.date_input("Data de término", value=date.today())
+                observacoes_afastamento = st.text_area("Observações administrativas (não informe diagnóstico ou CID)")
+                salvar_afastamento = st.form_submit_button("Registrar afastamento")
+            if salvar_afastamento:
+                tipo_final = tipo_personalizado.strip() if tipo_afastamento == "Outro afastamento legal" else tipo_afastamento
+                if not colaboradores_afastados:
+                    st.error("Selecione pelo menos um colaborador.")
+                elif fim_afastamento < inicio_afastamento:
+                    st.error("A data final não pode ser anterior à data inicial.")
+                elif not tipo_final:
+                    st.error("Informe o tipo de afastamento.")
+                else:
+                    try:
+                        with conectar() as conn:
+                            for colaborador_escolhido in colaboradores_afastados:
+                                conn.execute(
+                                    """INSERT INTO afastamentos
+                                       (colaborador_id, tipo, data_inicio, data_fim, observacoes, ativo)
+                                       VALUES (?, ?, ?, ?, ?, 1)""",
+                                    (opcoes[colaborador_escolhido], tipo_final, inicio_afastamento.isoformat(), fim_afastamento.isoformat(), observacoes_afastamento.strip()),
+                                )
+                        st.success(f"Afastamento registrado para {len(colaboradores_afastados)} colaborador(es).")
+                        st.rerun()
+                    except Exception:
+                        st.error("Não foi possível registrar o afastamento. Verifique os logs.")
+
+        st.divider()
+        st.subheader("Afastamentos registrados")
+        registros_afastamentos = consultar("""
+            SELECT a.id, c.nome AS colaborador, c.matricula, a.tipo,
+                   a.data_inicio, a.data_fim, a.observacoes, a.ativo
+            FROM afastamentos a
+            JOIN colaboradores c ON c.id = a.colaborador_id
+            ORDER BY a.data_inicio DESC, c.nome
+        """)
+        if registros_afastamentos.empty:
+            st.info("Nenhum afastamento registrado.")
+        else:
+            exibir_afastamentos = registros_afastamentos.copy()
+            exibir_afastamentos["Status"] = exibir_afastamentos["ativo"].map({1: "Ativo", 0: "Encerrado"})
+            st.dataframe(
+                exibir_afastamentos[["colaborador", "matricula", "tipo", "data_inicio", "data_fim", "Status", "observacoes"]].rename(columns={
+                    "colaborador": "Colaborador", "matricula": "Matrícula",
+                    "tipo": "Tipo", "data_inicio": "Início", "data_fim": "Término",
+                    "observacoes": "Observações",
+                }),
+                hide_index=True, use_container_width=True,
+            )
+            opcoes_registros = {
+                f'ID {int(r["id"])} | {r["colaborador"]} | {r["tipo"]} | {str(r["data_inicio"])[:10]} a {str(r["data_fim"])[:10]}': int(r["id"])
+                for _, r in registros_afastamentos.iterrows()
+            }
+            registro_selecionado = st.selectbox("Registro para encerrar ou reativar", list(opcoes_registros))
+            afastamento_id = opcoes_registros[registro_selecionado]
+            registro_atual = registros_afastamentos[registros_afastamentos["id"] == afastamento_id].iloc[0]
+            if int(registro_atual["ativo"]) == 1:
+                if st.button("Encerrar afastamento"):
+                    with conectar() as conn:
+                        conn.execute("UPDATE afastamentos SET ativo = 0 WHERE id = ?", (afastamento_id,))
+                    st.success("Afastamento encerrado.")
+                    st.rerun()
+            else:
+                if st.button("Reativar afastamento"):
+                    with conectar() as conn:
+                        conn.execute("UPDATE afastamentos SET ativo = 1 WHERE id = ?", (afastamento_id,))
+                    st.success("Afastamento reativado.")
+                    st.rerun()
 
 
 # ======================================================
@@ -2293,176 +2289,179 @@ elif menu == "Presenças":
 # RELATÓRIOS
 # ======================================================
 
-elif menu == "Histórico individual":
-    exibir_historico_individual()
-
 
 elif menu == "Relatórios":
     st.header("Relatórios de assiduidade")
-    resumo = consultar("""
-        SELECT * FROM (
-            SELECT
-                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
-                COALESCE(t.data_dia2, t.data::text) AS data_fim,
-                t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
-            FROM elegibilidade e
-            JOIN treinamentos t ON t.id = e.treinamento_id
-            JOIN colaboradores c ON c.id = e.colaborador_id
-            LEFT JOIN presencas p
-                ON p.treinamento_id = t.id AND p.colaborador_id = c.id
-            WHERE c.ativo = 1
+    aba_relatorios, aba_historico = st.tabs(["Relatórios", "Histórico individual"])
 
-            UNION ALL
+    with aba_relatorios:
+            resumo = consultar("""
+                SELECT * FROM (
+                    SELECT
+                        t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                        COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                        t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
+                    FROM elegibilidade e
+                    JOIN treinamentos t ON t.id = e.treinamento_id
+                    JOIN colaboradores c ON c.id = e.colaborador_id
+                    LEFT JOIN presencas p
+                        ON p.treinamento_id = t.id AND p.colaborador_id = c.id
+                    WHERE c.ativo = 1
 
-            SELECT
-                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
-                COALESCE(t.data_dia2, t.data::text) AS data_fim,
-                t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
-            FROM presencas p
-            JOIN treinamentos t ON t.id = p.treinamento_id
-            JOIN colaboradores c ON c.id = p.colaborador_id
-            WHERE c.ativo = 1
-              AND NOT EXISTS (
-                  SELECT 1 FROM elegibilidade e
-                  WHERE e.treinamento_id = p.treinamento_id
-                    AND e.colaborador_id = p.colaborador_id
-              )
-        ) participacoes
-        ORDER BY data DESC, treinamento, nome
-    """)
+                    UNION ALL
 
-    if resumo.empty:
-        st.info("Ainda não há dados para relatório.")
-    else:
-        hoje = date.today().isoformat()
-        resumo["resultado"] = "Pendente"
+                    SELECT
+                        t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                        COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                        t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
+                    FROM presencas p
+                    JOIN treinamentos t ON t.id = p.treinamento_id
+                    JOIN colaboradores c ON c.id = p.colaborador_id
+                    WHERE c.ativo = 1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM elegibilidade e
+                          WHERE e.treinamento_id = p.treinamento_id
+                            AND e.colaborador_id = p.colaborador_id
+                      )
+                ) participacoes
+                ORDER BY data DESC, treinamento, nome
+            """)
 
-        resumo.loc[resumo["situacao"] == "Cancelado", "resultado"] = "Cancelado"
+            if resumo.empty:
+                st.info("Ainda não há dados para relatório.")
+            else:
+                hoje = date.today().isoformat()
+                resumo["resultado"] = "Pendente"
 
-        realizado_e_data_passada = (
-            (resumo["situacao"] == "Realizado")
-            & (resumo["data_fim"].astype(str).str[:10] <= hoje)
-        )
-        resumo.loc[
-            realizado_e_data_passada & (resumo["presente"] == 1),
-            "resultado",
-        ] = "Presente"
+                resumo.loc[resumo["situacao"] == "Cancelado", "resultado"] = "Cancelado"
 
-        # Se o treinamento foi realizado e não existe confirmação (NULL)
-        # ou está explicitamente marcado como não presente (0), é ausência.
-        resumo.loc[
-            realizado_e_data_passada & (
-                resumo["presente"].isna() | (resumo["presente"] == 0)
-            ),
-            "resultado",
-        ] = "Ausente"
-
-        resumo.loc[
-            (resumo["situacao"] != "Realizado")
-            & (resumo["situacao"] != "Cancelado"),
-            "resultado",
-        ] = "Pendente"
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Presenças", int((resumo["resultado"] == "Presente").sum()))
-        c2.metric("Ausências", int((resumo["resultado"] == "Ausente").sum()))
-        c3.metric("Pendências", int((resumo["resultado"] == "Pendente").sum()))
-        c4.metric("Cancelados", int((resumo["resultado"] == "Cancelado").sum()))
-
-        st.subheader("Detalhamento")
-        filtro_resultado = st.multiselect(
-            "Filtrar por resultado",
-            options=["Presente", "Ausente", "Pendente", "Cancelado"],
-            default=["Presente", "Ausente", "Pendente", "Cancelado"],
-        )
-        filtro_treinamento = st.text_input("Filtrar por nome do treinamento")
-        exibicao = resumo[resumo["resultado"].isin(filtro_resultado)].copy()
-        if filtro_treinamento:
-            exibicao = exibicao[
-                exibicao["treinamento"].fillna("").str.contains(
-                    filtro_treinamento, case=False, na=False, regex=False
+                realizado_e_data_passada = (
+                    (resumo["situacao"] == "Realizado")
+                    & (resumo["data_fim"].astype(str).str[:10] <= hoje)
                 )
-            ]
-        colunas_relatorio = [
-            "treinamento_id", "treinamento", "data", "situacao",
-            "nome", "matricula", "cargo", "resultado",
-        ]
-        st.dataframe(
-            exibicao[colunas_relatorio],
-            hide_index=True,
-            use_container_width=True,
-        )
+                resumo.loc[
+                    realizado_e_data_passada & (resumo["presente"] == 1),
+                    "resultado",
+                ] = "Presente"
 
-        csv = exibicao[colunas_relatorio].to_csv(
-            index=False, sep=";", encoding="utf-8-sig"
-        )
-        st.download_button(
-            "Exportar relatório em CSV",
-            data=csv,
-            file_name="relatorio_assiduidade.csv",
-            mime="text/csv",
-        )
+                # Se o treinamento foi realizado e não existe confirmação (NULL)
+                # ou está explicitamente marcado como não presente (0), é ausência.
+                resumo.loc[
+                    realizado_e_data_passada & (
+                        resumo["presente"].isna() | (resumo["presente"] == 0)
+                    ),
+                    "resultado",
+                ] = "Ausente"
 
-        st.download_button(
-            "Exportar relatório completo em Excel",
-            data=gerar_excel_assiduidade(resumo),
-            file_name="relatorio_assiduidade.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+                resumo.loc[
+                    (resumo["situacao"] != "Realizado")
+                    & (resumo["situacao"] != "Cancelado"),
+                    "resultado",
+                ] = "Pendente"
 
-    st.divider()
-    st.subheader("Participantes externos")
-    try:
-        externos = consultar(
-            """
-            SELECT t.titulo AS treinamento, t.data, t.hora_inicio,
-                   pe.nome, pe.instituicao, pe.email, px.atualizado_em
-            FROM presencas_externas px
-            JOIN treinamentos t ON t.id = px.treinamento_id
-            JOIN participantes_externos pe ON pe.id = px.participante_externo_id
-            WHERE px.presente = 1
-            ORDER BY t.data DESC, t.hora_inicio, pe.nome
-            """
-        )
-        if externos.empty:
-            st.info("Ainda não há participantes externos com presença registrada.")
-        else:
-            st.dataframe(externos, hide_index=True, use_container_width=True)
-    except Exception:
-        st.warning(
-            "A tabela de participantes externos ainda não foi criada. "
-            "Execute o arquivo SQL de atualização do banco enviado junto com esta versão."
-        )
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Presenças", int((resumo["resultado"] == "Presente").sum()))
+                c2.metric("Ausências", int((resumo["resultado"] == "Ausente").sum()))
+                c3.metric("Pendências", int((resumo["resultado"] == "Pendente").sum()))
+                c4.metric("Cancelados", int((resumo["resultado"] == "Cancelado").sum()))
 
-    st.divider()
-    st.subheader("Gerar lista de presença — ANEXO 0185")
-    treinamentos_lista = listar_treinamentos()
-    if treinamentos_lista.empty:
-        st.info("Cadastre um treinamento para gerar a lista.")
-    else:
-        mapa_lista = {
-            formatar_treinamento(r): int(r["id"])
-            for _, r in treinamentos_lista.iterrows()
-        }
-        escolha_lista = st.selectbox(
-            "Treinamento para gerar a lista",
-            list(mapa_lista.keys()),
-            key="treinamento_lista_word",
-        )
-        if st.button("Gerar lista de presença em Word", use_container_width=True):
-            try:
-                id_lista = mapa_lista[escolha_lista]
-                titulo_lista = treinamentos_lista.loc[
-                    treinamentos_lista["id"] == id_lista, "titulo"
-                ].iloc[0]
-                arquivo_word = gerar_lista_presenca_word(id_lista, titulo_lista)
+                st.subheader("Detalhamento")
+                filtro_resultado = st.multiselect(
+                    "Filtrar por resultado",
+                    options=["Presente", "Ausente", "Pendente", "Cancelado"],
+                    default=["Presente", "Ausente", "Pendente", "Cancelado"],
+                )
+                filtro_treinamento = st.text_input("Filtrar por nome do treinamento")
+                exibicao = resumo[resumo["resultado"].isin(filtro_resultado)].copy()
+                if filtro_treinamento:
+                    exibicao = exibicao[
+                        exibicao["treinamento"].fillna("").str.contains(
+                            filtro_treinamento, case=False, na=False, regex=False
+                        )
+                    ]
+                colunas_relatorio = [
+                    "treinamento_id", "treinamento", "data", "situacao",
+                    "nome", "matricula", "cargo", "resultado",
+                ]
+                st.dataframe(
+                    exibicao[colunas_relatorio],
+                    hide_index=True,
+                    use_container_width=True,
+                )
+
+                csv = exibicao[colunas_relatorio].to_csv(
+                    index=False, sep=";", encoding="utf-8-sig"
+                )
                 st.download_button(
-                    "Baixar lista de presença (.docx)",
-                    data=arquivo_word,
-                    file_name=f"lista_presenca_{id_lista}.docx",
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    key=f"baixar_lista_word_{id_lista}",
+                    "Exportar relatório em CSV",
+                    data=csv,
+                    file_name="relatorio_assiduidade.csv",
+                    mime="text/csv",
                 )
-            except Exception as erro:
-                st.error(f"Não foi possível gerar a lista: {erro}")
-                st.exception(erro)
+
+                st.download_button(
+                    "Exportar relatório completo em Excel",
+                    data=gerar_excel_assiduidade(resumo),
+                    file_name="relatorio_assiduidade.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+            st.divider()
+            st.subheader("Participantes externos")
+            try:
+                externos = consultar(
+                    """
+                    SELECT t.titulo AS treinamento, t.data, t.hora_inicio,
+                           pe.nome, pe.instituicao, pe.email, px.atualizado_em
+                    FROM presencas_externas px
+                    JOIN treinamentos t ON t.id = px.treinamento_id
+                    JOIN participantes_externos pe ON pe.id = px.participante_externo_id
+                    WHERE px.presente = 1
+                    ORDER BY t.data DESC, t.hora_inicio, pe.nome
+                    """
+                )
+                if externos.empty:
+                    st.info("Ainda não há participantes externos com presença registrada.")
+                else:
+                    st.dataframe(externos, hide_index=True, use_container_width=True)
+            except Exception:
+                st.warning(
+                    "A tabela de participantes externos ainda não foi criada. "
+                    "Execute o arquivo SQL de atualização do banco enviado junto com esta versão."
+                )
+
+            st.divider()
+            st.subheader("Gerar lista de presença — ANEXO 0185")
+            treinamentos_lista = listar_treinamentos()
+            if treinamentos_lista.empty:
+                st.info("Cadastre um treinamento para gerar a lista.")
+            else:
+                mapa_lista = {
+                    formatar_treinamento(r): int(r["id"])
+                    for _, r in treinamentos_lista.iterrows()
+                }
+                escolha_lista = st.selectbox(
+                    "Treinamento para gerar a lista",
+                    list(mapa_lista.keys()),
+                    key="treinamento_lista_word",
+                )
+                if st.button("Gerar lista de presença em Word", use_container_width=True):
+                    try:
+                        id_lista = mapa_lista[escolha_lista]
+                        titulo_lista = treinamentos_lista.loc[
+                            treinamentos_lista["id"] == id_lista, "titulo"
+                        ].iloc[0]
+                        arquivo_word = gerar_lista_presenca_word(id_lista, titulo_lista)
+                        st.download_button(
+                            "Baixar lista de presença (.docx)",
+                            data=arquivo_word,
+                            file_name=f"lista_presenca_{id_lista}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"baixar_lista_word_{id_lista}",
+                        )
+                    except Exception as erro:
+                        st.error(f"Não foi possível gerar a lista: {erro}")
+                        st.exception(erro)
+
+    with aba_historico:
+        exibir_historico_individual()
