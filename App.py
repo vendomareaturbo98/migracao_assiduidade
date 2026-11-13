@@ -2020,3 +2020,4 @@ elif menu == "Relatórios":
                 )
             except Exception as erro:
                 st.error(f"Não foi possível gerar a lista: {erro}")
+                st.exception(erro)
