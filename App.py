@@ -117,7 +117,7 @@ def interface_autenticacao():
                 st.session_state["admin_email"] = email
                 with st.sidebar:
                     st.caption(f"Conectado: {email}")
-                    if st.button("Sair", use_container_width=True):
+                    if st.button("Sair", use_container_width=True, key="botao_sair"):
                         try:
                             cliente.auth.sign_out()
                         except Exception:
