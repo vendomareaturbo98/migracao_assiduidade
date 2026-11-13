@@ -809,7 +809,7 @@ def gerar_excel_assiduidade(dados):
             for coluna in planilha.columns:
                 letra = coluna[0].column_letter
                 maior = max(
-                    (len(str(c.valor)) for c in coluna if c.value is not None),
+                    (len(str(c.value)) for c in coluna if c.value is not None),
                     default=10,
                 )
                 planilha.column_dimensions[letra].width = min(max(maior + 2, 12), 42)
