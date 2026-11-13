@@ -763,61 +763,216 @@ def calcular_resumo_assiduidade(dados):
 
 
 def gerar_excel_assiduidade(dados):
-    """Gera planilha Excel com participações, indicadores e gráfico de assiduidade."""
+    """Gera relatório Excel com panorama, assiduidade e dados individuais."""
     buffer = BytesIO()
+    dados = dados.copy() if dados is not None else pd.DataFrame()
     resumo = calcular_resumo_assiduidade(dados)
-    colunas = [
+
+    colunas_participacoes = [
         "treinamento_id", "treinamento", "data", "data_fim", "situacao",
         "nome", "matricula", "cargo", "presente", "resultado",
     ]
-    exportacao = dados.reindex(columns=colunas).copy()
+    exportacao = dados.reindex(columns=colunas_participacoes).copy()
+
+    # Indicadores gerais: pendências e cancelamentos são apresentados,
+    # mas não integram a taxa de presença.
+    contagem_resultados = (
+        dados["resultado"].value_counts()
+        if not dados.empty and "resultado" in dados.columns
+        else pd.Series(dtype="int64")
+    )
+    total_presencas = int(contagem_resultados.get("Presente", 0))
+    total_ausencias = int(contagem_resultados.get("Ausente", 0))
+    total_concluidas = total_presencas + total_ausencias
+    taxa_geral = round(total_presencas / total_concluidas * 100, 1) if total_concluidas else 0.0
+
+    indicadores = pd.DataFrame([{
+        "Colaboradores analisados": int(resumo["colaborador_id"].nunique()) if not resumo.empty else 0,
+        "Treinamentos": int(dados["treinamento_id"].nunique()) if not dados.empty and "treinamento_id" in dados else 0,
+        "Presenças": total_presencas,
+        "Ausências": total_ausencias,
+        "Pendências": int(contagem_resultados.get("Pendente", 0)),
+        "Cancelados": int(contagem_resultados.get("Cancelado", 0)),
+        "Taxa de presença (%)": taxa_geral,
+    }])
+
+    # Bases dos gráficos do Panorama.
+    if not dados.empty and {"treinamento_id", "situacao"}.issubset(dados.columns):
+        base_treinamentos = dados.drop_duplicates("treinamento_id")
+        situacoes = (
+            base_treinamentos["situacao"].value_counts()
+            .reindex(["Realizado", "Agendado", "Remarcado", "Cancelado"], fill_value=0)
+            .rename_axis("Situação").reset_index(name="Quantidade")
+        )
+    else:
+        situacoes = pd.DataFrame({
+            "Situação": ["Realizado", "Agendado", "Remarcado", "Cancelado"],
+            "Quantidade": [0, 0, 0, 0],
+        })
+
+    resultados = (
+        contagem_resultados.reindex(
+            ["Presente", "Ausente", "Pendente", "Cancelado"], fill_value=0
+        )
+        .rename_axis("Resultado").reset_index(name="Quantidade")
+    )
+
+    # Bases dos gráficos da aba Assiduidade: somente participações concluídas.
+    concluidas = dados[
+        dados["resultado"].isin(["Presente", "Ausente"])
+    ].copy() if not dados.empty and "resultado" in dados.columns else pd.DataFrame()
+
+    if not concluidas.empty and "data" in concluidas.columns:
+        concluidas["data"] = pd.to_datetime(concluidas["data"], errors="coerce")
+        concluidas = concluidas.dropna(subset=["data"])
+        concluidas["Mês"] = concluidas["data"].dt.to_period("M").astype(str)
+        mensal = concluidas.groupby("Mês").agg(
+            Presenças=("resultado", lambda serie: int(serie.eq("Presente").sum())),
+            Participações=("resultado", "size"),
+        ).reset_index()
+        mensal["Taxa de presença (%)"] = (
+            mensal["Presenças"] / mensal["Participações"] * 100
+        ).round(1)
+    else:
+        mensal = pd.DataFrame(columns=["Mês", "Presenças", "Participações", "Taxa de presença (%)"])
+
+    if not concluidas.empty:
+        concluidas["Cargo"] = concluidas["cargo"].fillna("Não informado").replace("", "Não informado")
+        por_cargo = concluidas.pivot_table(
+            index="Cargo", columns="resultado", values="treinamento_id",
+            aggfunc="count", fill_value=0,
+        ).reset_index()
+        por_cargo.columns.name = None
+        for coluna in ["Presente", "Ausente"]:
+            if coluna not in por_cargo.columns:
+                por_cargo[coluna] = 0
+        por_cargo = por_cargo[["Cargo", "Presente", "Ausente"]]
+    else:
+        por_cargo = pd.DataFrame(columns=["Cargo", "Presente", "Ausente"])
+
+    # Monitoramento individual permanece exclusivamente em formato tabular.
+    if not resumo.empty:
+        monitoramento = resumo[[
+            "nome", "matricula", "cargo", "presencas", "ausencias",
+            "pendencias", "cancelados", "treinamentos_contabilizados", "taxa_presenca",
+        ]].rename(columns={
+            "nome": "Colaborador", "matricula": "Matrícula", "cargo": "Cargo",
+            "presencas": "Presenças", "ausencias": "Ausências",
+            "pendencias": "Pendências", "cancelados": "Cancelados",
+            "treinamentos_contabilizados": "Treinamentos contabilizados",
+            "taxa_presenca": "Taxa de presença (%)",
+        })
+    else:
+        monitoramento = pd.DataFrame(columns=[
+            "Colaborador", "Matrícula", "Cargo", "Presenças", "Ausências",
+            "Pendências", "Cancelados", "Treinamentos contabilizados",
+            "Taxa de presença (%)",
+        ])
 
     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-        exportacao.to_excel(writer, sheet_name="Participações", index=False)
-        resumo.to_excel(writer, sheet_name="Assiduidade", index=False)
-
-        indicadores = pd.DataFrame([{
-            "Colaboradores analisados": int(resumo["colaborador_id"].nunique()) if not resumo.empty else 0,
-            "Presenças": int((dados["resultado"] == "Presente").sum()) if not dados.empty else 0,
-            "Ausências": int((dados["resultado"] == "Ausente").sum()) if not dados.empty else 0,
-            "Pendências": int((dados["resultado"] == "Pendente").sum()) if not dados.empty else 0,
-            "Cancelados": int((dados["resultado"] == "Cancelado").sum()) if not dados.empty else 0,
-        }])
         indicadores.to_excel(writer, sheet_name="Indicadores", index=False)
+        situacoes.to_excel(writer, sheet_name="Panorama", index=False, startrow=1)
+        resultados.to_excel(writer, sheet_name="Panorama", index=False, startrow=1, startcol=4)
+        mensal.to_excel(writer, sheet_name="Assiduidade", index=False)
+        por_cargo.to_excel(writer, sheet_name="Assiduidade", index=False, startrow=1, startcol=5)
+        monitoramento.to_excel(writer, sheet_name="Monitoramento individual", index=False)
+        exportacao.to_excel(writer, sheet_name="Participações", index=False)
 
-        ws = writer.book["Assiduidade"]
-        if len(resumo) > 0:
-            grafico = BarChart()
-            grafico.type = "bar"
-            grafico.style = 10
-            grafico.title = "Taxa de presença por colaborador"
-            grafico.y_axis.title = "Colaborador"
-            grafico.x_axis.title = "Taxa de presença (%)"
-            grafico.height = 10
-            grafico.width = 20
-            coluna_taxa = resumo.columns.get_loc("taxa_presenca") + 1
-            dados_grafico = Reference(
-                ws, min_col=coluna_taxa, min_row=1, max_row=len(resumo) + 1
+        wb = writer.book
+        ws_panorama = wb["Panorama"]
+        ws_panorama["A1"] = "Situação dos treinamentos"
+        ws_panorama["E1"] = "Resultado das participações"
+
+        if int(situacoes["Quantidade"].sum()) > 0:
+            grafico_situacao = DoughnutChart()
+            grafico_situacao.title = "Situação dos treinamentos"
+            grafico_situacao.style = 10
+            grafico_situacao.holeSize = 55
+            grafico_situacao.height = 8
+            grafico_situacao.width = 13
+            grafico_situacao.add_data(
+                Reference(ws_panorama, min_col=2, min_row=2, max_row=len(situacoes) + 2),
+                titles_from_data=True,
             )
-            categorias = Reference(ws, min_col=2, min_row=2, max_row=len(resumo) + 1)
-            grafico.add_data(dados_grafico, titles_from_data=True)
-            grafico.set_categories(categorias)
-            ws.add_chart(grafico, "L2")
+            grafico_situacao.set_categories(
+                Reference(ws_panorama, min_col=1, min_row=3, max_row=len(situacoes) + 2)
+            )
+            ws_panorama.add_chart(grafico_situacao, "A9")
 
-        for planilha in writer.book.worksheets:
+        if int(resultados["Quantidade"].sum()) > 0:
+            grafico_resultados = BarChart()
+            grafico_resultados.type = "col"
+            grafico_resultados.style = 10
+            grafico_resultados.title = "Resultado das participações"
+            grafico_resultados.y_axis.title = "Participações"
+            grafico_resultados.x_axis.title = "Resultado"
+            grafico_resultados.height = 8
+            grafico_resultados.width = 13
+            grafico_resultados.add_data(
+                Reference(ws_panorama, min_col=6, min_row=2, max_row=len(resultados) + 2),
+                titles_from_data=True,
+            )
+            grafico_resultados.set_categories(
+                Reference(ws_panorama, min_col=5, min_row=3, max_row=len(resultados) + 2)
+            )
+            ws_panorama.add_chart(grafico_resultados, "H9")
+
+        ws_assiduidade = wb["Assiduidade"]
+        ws_assiduidade["F1"] = "Cargo"
+        if len(mensal) > 0:
+            grafico_mensal = LineChart()
+            grafico_mensal.title = "Evolução mensal da presença"
+            grafico_mensal.style = 13
+            grafico_mensal.y_axis.title = "Taxa de presença (%)"
+            grafico_mensal.x_axis.title = "Mês"
+            grafico_mensal.y_axis.scaling.min = 0
+            grafico_mensal.y_axis.scaling.max = 100
+            grafico_mensal.height = 8
+            grafico_mensal.width = 14
+            grafico_mensal.add_data(
+                Reference(ws_assiduidade, min_col=4, min_row=1, max_row=len(mensal) + 1),
+                titles_from_data=True,
+            )
+            grafico_mensal.set_categories(
+                Reference(ws_assiduidade, min_col=1, min_row=2, max_row=len(mensal) + 1)
+            )
+            ws_assiduidade.add_chart(grafico_mensal, "A8")
+
+        if len(por_cargo) > 0:
+            grafico_cargo = BarChart()
+            grafico_cargo.type = "col"
+            grafico_cargo.grouping = "clustered"
+            grafico_cargo.overlap = 0
+            grafico_cargo.style = 10
+            grafico_cargo.title = "Presença por cargo"
+            grafico_cargo.y_axis.title = "Participações"
+            grafico_cargo.x_axis.title = "Cargo"
+            grafico_cargo.height = 8
+            grafico_cargo.width = 14
+            grafico_cargo.add_data(
+                Reference(ws_assiduidade, min_col=7, max_col=8, min_row=2, max_row=len(por_cargo) + 2),
+                titles_from_data=True,
+            )
+            grafico_cargo.set_categories(
+                Reference(ws_assiduidade, min_col=6, min_row=3, max_row=len(por_cargo) + 2)
+            )
+            ws_assiduidade.add_chart(grafico_cargo, "H8")
+
+        for planilha in wb.worksheets:
             planilha.freeze_panes = "A2"
             planilha.auto_filter.ref = planilha.dimensions
             for coluna in planilha.columns:
                 letra = coluna[0].column_letter
                 maior = max(
-                    (len(str(c.value)) for c in coluna if c.value is not None),
+                    (len(str(celula.value)) for celula in coluna if celula.value is not None),
                     default=10,
                 )
                 planilha.column_dimensions[letra].width = min(max(maior + 2, 12), 42)
 
+        wb["Indicadores"].freeze_panes = "A2"
+
     buffer.seek(0)
     return buffer.getvalue()
-
 
 def _definir_texto_celula(celula, texto):
     celula.text = ""
