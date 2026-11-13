@@ -1816,7 +1816,7 @@ elif menu == "Relatórios":
             SELECT
                 t.id AS treinamento_id, t.titulo AS treinamento, t.data,
                 COALESCE(t.data_dia2, t.data::text) AS data_fim,
-                t.situacao, c.nome, c.matricula, c.cargo, p.presente
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
             FROM elegibilidade e
             JOIN treinamentos t ON t.id = e.treinamento_id
             JOIN colaboradores c ON c.id = e.colaborador_id
@@ -1829,7 +1829,7 @@ elif menu == "Relatórios":
             SELECT
                 t.id AS treinamento_id, t.titulo AS treinamento, t.data,
                 COALESCE(t.data_dia2, t.data::text) AS data_fim,
-                t.situacao, c.nome, c.matricula, c.cargo, p.presente
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula, c.cargo, p.presente
             FROM presencas p
             JOIN treinamentos t ON t.id = p.treinamento_id
             JOIN colaboradores c ON c.id = p.colaborador_id
