@@ -840,7 +840,7 @@ def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
             c.cargo,
             'UCM/MI' AS instituicao,
             CASE
-                WHEN UPPER(TRIM(COALESCE(c.cargo, ''))) LIKE '%RJU'
+                WHEN RIGHT(UPPER(TRIM(COALESCE(c.cargo, ''))), 3) = 'RJU'
                     THEN 'UFU'
                 ELSE 'EBSERH'
             END AS vinculo
