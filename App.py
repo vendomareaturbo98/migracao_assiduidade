@@ -950,11 +950,11 @@ def gerar_excel_assiduidade(dados):
             grafico_cargo.height = 8
             grafico_cargo.width = 14
             grafico_cargo.add_data(
-                Reference(ws_assiduidade, min_col=7, max_col=8, min_row=1, max_row=len(por_cargo) + 1),
+                Reference(ws_assiduidade, min_col=7, max_col=8, min_row=2, max_row=len(por_cargo) + 2),
                 titles_from_data=True,
             )
             grafico_cargo.set_categories(
-                Reference(ws_assiduidade, min_col=6, min_row=2, max_row=len(por_cargo) + 1)
+                Reference(ws_assiduidade, min_col=6, min_row=3, max_row=len(por_cargo) + 2)
             )
             ws_assiduidade.add_chart(grafico_cargo, "H8")
 
