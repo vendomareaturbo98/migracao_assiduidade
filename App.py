@@ -1,4 +1,3 @@
-import hmac
 import os
 import re
 import unicodedata
@@ -7,6 +6,7 @@ from datetime import date, time
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+from supabase import create_client
 
 from dashboard_utils import (
     SITUACOES,
@@ -47,42 +47,149 @@ if caminho_css.exists():
         )
 
 
-def obter_senha_admin():
-    senha = os.environ.get("ADMIN_PASSWORD", "").strip()
-    if senha:
-        return senha
+DOMINIOS_AUTORIZADOS = ("@ebserh.gov.br", "@hubrasil.gov.br")
+
+
+def obter_config_supabase():
+    """Lê apenas URL e chave pública; nunca utiliza service_role no aplicativo."""
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    chave = os.environ.get("SUPABASE_ANON_KEY", "").strip()
     try:
-        return str(st.secrets.get("ADMIN_PASSWORD", "")).strip()
+        url = url or str(st.secrets.get("SUPABASE_URL", "")).strip()
+        chave = chave or str(st.secrets.get("SUPABASE_ANON_KEY", "")).strip()
     except Exception:
-        return ""
+        pass
+    return url, chave
 
 
-senha_configurada = obter_senha_admin()
-if not senha_configurada:
-    st.title("📊 Sistema de Assiduidade")
-    st.error(
-        "A área administrativa está bloqueada. Configure ADMIN_PASSWORD "
-        "nos Secrets da hospedagem antes de utilizar este aplicativo."
+def cliente_autenticacao():
+    url, chave = obter_config_supabase()
+    if not url or not chave:
+        return None
+    return create_client(url, chave)
+
+
+def email_institucional_valido(email):
+    email = (email or "").strip().lower()
+    return (
+        len(email) <= 254
+        and email.count("@") == 1
+        and any(email.endswith(dominio) for dominio in DOMINIOS_AUTORIZADOS)
     )
+
+
+def usuario_confirmado(usuario):
+    if usuario is None:
+        return False
+    confirmado = getattr(usuario, "email_confirmed_at", None)
+    if confirmado:
+        return True
+    # Compatibilidade com versões da resposta do supabase-py.
+    return bool(getattr(usuario, "confirmed_at", None))
+
+
+def interface_autenticacao():
+    st.title("🔐 Acesso administrativo")
+    st.caption("Cadastro permitido somente para e-mails institucionais autorizados.")
+
+    cliente = cliente_autenticacao()
+    if cliente is None:
+        st.error(
+            "Configuração de autenticação ausente. Cadastre SUPABASE_URL e "
+            "SUPABASE_ANON_KEY nos Secrets da hospedagem (ou variáveis de ambiente)."
+        )
+        st.stop()
+
+    token = st.session_state.get("admin_access_token")
+    if token:
+        try:
+            resposta = cliente.auth.get_user(token)
+            usuario = getattr(resposta, "user", None)
+            email = getattr(usuario, "email", "") if usuario else ""
+            if usuario and usuario_confirmado(usuario) and email_institucional_valido(email):
+                st.session_state["admin_email"] = email
+                with st.sidebar:
+                    st.caption(f"Conectado: {email}")
+                    if st.button("Sair", use_container_width=True):
+                        try:
+                            cliente.auth.sign_out()
+                        except Exception:
+                            pass
+                        st.session_state.pop("admin_access_token", None)
+                        st.session_state.pop("admin_email", None)
+                        st.rerun()
+                return
+        except Exception:
+            pass
+        st.session_state.pop("admin_access_token", None)
+        st.session_state.pop("admin_email", None)
+
+    aba_login, aba_cadastro = st.tabs(["Entrar", "Criar conta"])
+
+    with aba_login:
+        with st.form("form_login_admin"):
+            email_login = st.text_input("E-mail institucional", key="email_login").strip().lower()
+            senha_login = st.text_input("Senha", type="password", key="senha_login")
+            entrar = st.form_submit_button("Entrar", use_container_width=True)
+        if entrar:
+            if not email_institucional_valido(email_login):
+                st.error("Use um e-mail terminado em @ebserh.gov.br ou @hubrasil.gov.br.")
+            elif not senha_login:
+                st.error("Informe sua senha.")
+            else:
+                try:
+                    resposta = cliente.auth.sign_in_with_password(
+                        {"email": email_login, "password": senha_login}
+                    )
+                    usuario = getattr(resposta, "user", None)
+                    sessao = getattr(resposta, "session", None)
+                    if not usuario_confirmado(usuario):
+                        st.error("Confirme seu e-mail pelo link enviado antes de entrar.")
+                    elif not sessao or not getattr(sessao, "access_token", None):
+                        st.error("Não foi possível iniciar a sessão. Tente novamente.")
+                    else:
+                        st.session_state["admin_access_token"] = sessao.access_token
+                        st.session_state["admin_email"] = email_login
+                        st.rerun()
+                except Exception:
+                    st.error("Não foi possível entrar. Confira o e-mail, a senha e a confirmação do endereço.")
+
+    with aba_cadastro:
+        with st.form("form_cadastro_admin"):
+            email_novo = st.text_input("E-mail institucional", key="email_novo").strip().lower()
+            senha_nova = st.text_input("Crie uma senha", type="password", key="senha_nova")
+            confirmar_senha = st.text_input("Confirme a senha", type="password", key="confirmar_senha")
+            cadastrar = st.form_submit_button("Criar conta", use_container_width=True)
+        if cadastrar:
+            if not email_institucional_valido(email_novo):
+                st.error("Cadastro permitido somente para @ebserh.gov.br ou @hubrasil.gov.br.")
+            elif len(senha_nova) < 8:
+                st.error("A senha deve ter pelo menos 8 caracteres.")
+            elif senha_nova != confirmar_senha:
+                st.error("As senhas não conferem.")
+            else:
+                try:
+                    resposta = cliente.auth.sign_up({"email": email_novo, "password": senha_nova})
+                    usuario = getattr(resposta, "user", None)
+                    sessao = getattr(resposta, "session", None)
+                    if usuario and usuario_confirmado(usuario) and sessao:
+                        st.session_state["admin_access_token"] = sessao.access_token
+                        st.session_state["admin_email"] = email_novo
+                        st.success("Conta criada e e-mail confirmado.")
+                        st.rerun()
+                    else:
+                        st.success(
+                            "Cadastro iniciado. Enviamos um link de confirmação para "
+                            "seu e-mail. Após confirmar, volte à página e entre com sua senha."
+                        )
+                except Exception:
+                    st.error("Não foi possível criar a conta. Verifique se o e-mail já está cadastrado e tente novamente.")
+
+    st.caption("A confirmação do e-mail é obrigatória. A senha é gerenciada pelo Supabase Auth.")
     st.stop()
 
-if not st.session_state.get("admin_autenticado", False):
-    st.title("🔐 Acesso administrativo")
-    with st.form("form_login_admin"):
-        senha_digitada = st.text_input(
-            "Senha administrativa",
-            type="password",
-            autocomplete="current-password",
-        )
-        entrar = st.form_submit_button("Entrar", use_container_width=True)
-    if entrar:
-        if hmac.compare_digest(senha_digitada, senha_configurada):
-            st.session_state["admin_autenticado"] = True
-            st.rerun()
-        else:
-            st.error("Senha incorreta.")
-    st.caption("Acesso exclusivo aos responsáveis pelo sistema.")
-    st.stop()
+
+interface_autenticacao()
 
 # Cria tabelas se necessário; não apaga dados existentes.
 inicializar_banco()
@@ -1417,4 +1524,34 @@ elif menu == "Relatórios":
             data=csv,
             file_name="relatorio_assiduidade.csv",
             mime="text/csv",
+        )
+
+    st.divider()
+    st.subheader("Participantes externos")
+    try:
+        externos = consultar(
+            """
+            SELECT t.titulo AS treinamento, t.data, t.hora_inicio,
+                   pe.nome, pe.instituicao, pe.email, px.atualizado_em
+            FROM presencas_externas px
+            JOIN treinamentos t ON t.id = px.treinamento_id
+            JOIN participantes_externos pe ON pe.id = px.participante_externo_id
+            WHERE px.presente = 1
+            ORDER BY t.data DESC, t.hora_inicio, pe.nome
+            """
+        )
+        if externos.empty:
+            st.info("Ainda não há participantes externos com presença registrada.")
+        else:
+            st.dataframe(externos, hide_index=True, use_container_width=True)
+            st.download_button(
+                "Exportar participantes externos",
+                data=externos.to_csv(index=False, sep=";", encoding="utf-8-sig"),
+                file_name="participantes_externos.csv",
+                mime="text/csv",
+            )
+    except Exception:
+        st.warning(
+            "A tabela de participantes externos ainda não foi criada. "
+            "Execute o arquivo SQL de atualização do banco enviado junto com esta versão."
         )
