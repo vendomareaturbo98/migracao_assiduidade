@@ -2,6 +2,11 @@ import os
 import re
 import unicodedata
 from datetime import date, time
+from io import BytesIO
+from pathlib import Path
+
+from docx import Document
+from openpyxl.chart import BarChart, Reference
 
 import pandas as pd
 import plotly.express as px
@@ -513,6 +518,30 @@ def exibir_visao_geral():
                     use_container_width=True,
                 )
 
+        st.subheader("Monitoramento de colaboradores com assiduidade ≤ 30%")
+        resumo_assiduidade = calcular_resumo_assiduidade(participacoes_filtradas)
+        monitorados = resumo_assiduidade[
+            resumo_assiduidade["taxa_presenca"].notna()
+            & (resumo_assiduidade["taxa_presenca"] <= 30)
+        ].sort_values(["taxa_presenca", "ausencias"], ascending=[True, False])
+        if monitorados.empty:
+            st.success("Nenhum colaborador com taxa de presença igual ou inferior a 30% nos filtros selecionados.")
+        else:
+            st.caption("Pendências e treinamentos cancelados não entram no cálculo da taxa.")
+            st.dataframe(
+                monitorados[[
+                    "nome", "matricula", "cargo", "presencas", "ausencias",
+                    "pendencias", "treinamentos_contabilizados", "taxa_presenca",
+                ]].rename(columns={
+                    "nome": "Colaborador", "matricula": "Matrícula",
+                    "cargo": "Cargo", "presencas": "Presenças",
+                    "ausencias": "Ausências", "pendencias": "Pendências",
+                    "treinamentos_contabilizados": "Treinamentos contabilizados",
+                    "taxa_presenca": "Taxa de presença (%)",
+                }),
+                hide_index=True, use_container_width=True,
+            )
+
     with aba_agenda:
         st.subheader("Treinamentos no período")
         if treinamentos_filtrados.empty:
@@ -631,6 +660,362 @@ def formatar_treinamento(linha):
     )
 
 
+
+
+# ======================================================
+# RECURSOS COMPLEMENTARES: ASSIDUIDADE, HISTÓRICO E EXPORTAÇÕES
+# ======================================================
+
+def carregar_relatorio_interno():
+    """Carrega somente participações de colaboradores internos."""
+    dados = consultar("""
+        SELECT * FROM (
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
+                c.cargo, p.presente
+            FROM elegibilidade e
+            JOIN treinamentos t ON t.id = e.treinamento_id
+            JOIN colaboradores c ON c.id = e.colaborador_id
+            LEFT JOIN presencas p
+                ON p.treinamento_id = t.id AND p.colaborador_id = c.id
+            WHERE c.ativo = 1
+
+            UNION ALL
+
+            SELECT
+                t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
+                t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
+                c.cargo, p.presente
+            FROM presencas p
+            JOIN treinamentos t ON t.id = p.treinamento_id
+            JOIN colaboradores c ON c.id = p.colaborador_id
+            WHERE c.ativo = 1
+              AND NOT EXISTS (
+                  SELECT 1 FROM elegibilidade e
+                  WHERE e.treinamento_id = p.treinamento_id
+                    AND e.colaborador_id = p.colaborador_id
+              )
+        ) participacoes
+        ORDER BY data DESC, treinamento, nome
+    """)
+
+    if dados.empty:
+        dados["resultado"] = pd.Series(dtype="object")
+        return dados
+
+    hoje = date.today().isoformat()
+    dados["resultado"] = "Pendente"
+    dados.loc[dados["situacao"] == "Cancelado", "resultado"] = "Cancelado"
+
+    treinamento_concluido = (
+        (dados["situacao"] == "Realizado")
+        & (dados["data_fim"].astype(str).str[:10] <= hoje)
+    )
+    dados.loc[
+        treinamento_concluido & (dados["presente"] == 1), "resultado"
+    ] = "Presente"
+    dados.loc[
+        treinamento_concluido
+        & (dados["presente"].isna() | (dados["presente"] == 0)),
+        "resultado",
+    ] = "Ausente"
+    return dados
+
+
+def calcular_resumo_assiduidade(dados):
+    """Taxa = presenças / (presenças + ausências); pendências/cancelados fora."""
+    colunas = [
+        "colaborador_id", "nome", "matricula", "cargo", "presencas",
+        "ausencias", "pendencias", "cancelados", "treinamentos_contabilizados",
+        "taxa_presenca",
+    ]
+    if dados is None or dados.empty:
+        return pd.DataFrame(columns=colunas)
+
+    linhas = []
+    for (cid, nome, matricula, cargo), grupo in dados.groupby(
+        ["colaborador_id", "nome", "matricula", "cargo"], dropna=False
+    ):
+        presencas = int((grupo["resultado"] == "Presente").sum())
+        ausencias = int((grupo["resultado"] == "Ausente").sum())
+        pendencias = int((grupo["resultado"] == "Pendente").sum())
+        cancelados = int((grupo["resultado"] == "Cancelado").sum())
+        contabilizados = presencas + ausencias
+        taxa = (presencas / contabilizados * 100) if contabilizados else None
+        linhas.append({
+            "colaborador_id": cid,
+            "nome": nome,
+            "matricula": matricula,
+            "cargo": cargo,
+            "presencas": presencas,
+            "ausencias": ausencias,
+            "pendencias": pendencias,
+            "cancelados": cancelados,
+            "treinamentos_contabilizados": contabilizados,
+            "taxa_presenca": taxa,
+        })
+
+    return pd.DataFrame(linhas, columns=colunas)
+
+
+def gerar_excel_assiduidade(dados):
+    """Gera planilha Excel com participações, indicadores e gráfico de assiduidade."""
+    buffer = BytesIO()
+    resumo = calcular_resumo_assiduidade(dados)
+    colunas = [
+        "treinamento_id", "treinamento", "data", "data_fim", "situacao",
+        "nome", "matricula", "cargo", "presente", "resultado",
+    ]
+    exportacao = dados.reindex(columns=colunas).copy()
+
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        exportacao.to_excel(writer, sheet_name="Participações", index=False)
+        resumo.to_excel(writer, sheet_name="Assiduidade", index=False)
+
+        indicadores = pd.DataFrame([{
+            "Colaboradores analisados": int(resumo["colaborador_id"].nunique()) if not resumo.empty else 0,
+            "Presenças": int((dados["resultado"] == "Presente").sum()) if not dados.empty else 0,
+            "Ausências": int((dados["resultado"] == "Ausente").sum()) if not dados.empty else 0,
+            "Pendências": int((dados["resultado"] == "Pendente").sum()) if not dados.empty else 0,
+            "Cancelados": int((dados["resultado"] == "Cancelado").sum()) if not dados.empty else 0,
+        }])
+        indicadores.to_excel(writer, sheet_name="Indicadores", index=False)
+
+        ws = writer.book["Assiduidade"]
+        if len(resumo) > 0:
+            grafico = BarChart()
+            grafico.type = "bar"
+            grafico.style = 10
+            grafico.title = "Taxa de presença por colaborador"
+            grafico.y_axis.title = "Colaborador"
+            grafico.x_axis.title = "Taxa de presença (%)"
+            grafico.height = 10
+            grafico.width = 20
+            coluna_taxa = resumo.columns.get_loc("taxa_presenca") + 1
+            dados_grafico = Reference(
+                ws, min_col=coluna_taxa, min_row=1, max_row=len(resumo) + 1
+            )
+            categorias = Reference(ws, min_col=2, min_row=2, max_row=len(resumo) + 1)
+            grafico.add_data(dados_grafico, titles_from_data=True)
+            grafico.set_categories(categorias)
+            ws.add_chart(grafico, "L2")
+
+        for planilha in writer.book.worksheets:
+            planilha.freeze_panes = "A2"
+            planilha.auto_filter.ref = planilha.dimensions
+            for coluna in planilha.columns:
+                letra = coluna[0].column_letter
+                maior = max(
+                    (len(str(c.value)) for c in coluna if c.value is not None),
+                    default=10,
+                )
+                planilha.column_dimensions[letra].width = min(max(maior + 2, 12), 42)
+
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
+def _definir_texto_celula(celula, texto):
+    celula.text = ""
+    if celula.paragraphs:
+        celula.paragraphs[0].add_run(str(texto))
+
+
+def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
+    """Preenche o modelo oficial ANEXO 0185 com presenças internas e externas."""
+    caminho_modelo = Path(__file__).parent / "modelo_anexo_0185.docx"
+    if not caminho_modelo.exists():
+        raise FileNotFoundError(
+            "O arquivo modelo_anexo_0185.docx não está na pasta do aplicativo."
+        )
+
+    internos = consultar(
+        """
+        SELECT c.nome, c.cargo, '' AS instituicao, 'Interno' AS vinculo
+        FROM presencas p
+        JOIN colaboradores c ON c.id = p.colaborador_id
+        WHERE p.treinamento_id = ? AND p.presente = 1 AND c.ativo = 1
+        ORDER BY c.nome
+        """,
+        (treinamento_id,),
+    )
+    externos = consultar(
+        """
+        SELECT pe.nome, '' AS cargo, pe.instituicao, 'Externo' AS vinculo
+        FROM presencas_externas px
+        JOIN participantes_externos pe
+            ON pe.id = px.participante_externo_id
+        WHERE px.treinamento_id = ? AND px.presente = 1
+        ORDER BY pe.nome
+        """,
+        (treinamento_id,),
+    )
+    participantes = pd.concat([internos, externos], ignore_index=True)
+    if participantes.empty:
+        raise ValueError("Não há presenças confirmadas para este treinamento.")
+
+    documento = Document(str(caminho_modelo))
+
+    # Mantém o cabeçalho oficial, mas remove os dados de exemplo.
+    campos_cabecalho = (
+        "Entidade Executora:", "Local de Realização:", "Horário de Início:",
+        "Horário de Término:", "Carga horária:", "Data:",
+        "Nome completo do(s)", "Instrutor(es):", "Conteúdo abordado:",
+    )
+    for tabela in documento.tables:
+        for linha in tabela.rows:
+            for celula in linha.cells:
+                texto_original = celula.text.strip()
+                if "Atividade:" in texto_original:
+                    _definir_texto_celula(celula, f"Atividade: {titulo_treinamento}")
+                elif any(campo in texto_original for campo in campos_cabecalho):
+                    rotulo = next(
+                        (campo for campo in campos_cabecalho if campo in texto_original),
+                        "",
+                    )
+                    _definir_texto_celula(celula, rotulo)
+
+    linhas_participantes = []
+    for tabela in documento.tables:
+        indice_cabecalho = None
+        for indice, linha in enumerate(tabela.rows):
+            texto_linha = " ".join(c.text for c in linha.cells).casefold()
+            if "participante" in texto_linha and "assinatura" in texto_linha:
+                indice_cabecalho = indice
+                break
+        if indice_cabecalho is not None:
+            for linha in tabela.rows[indice_cabecalho + 1:]:
+                if len(linha.cells) >= 10:
+                    linhas_participantes.append(linha)
+
+    if len(participantes) > len(linhas_participantes):
+        raise ValueError(
+            f"O modelo comporta {len(linhas_participantes)} participantes; "
+            f"há {len(participantes)} presenças confirmadas."
+        )
+
+    # Limpa as linhas de exemplo e preenche apenas as presenças confirmadas.
+    for numero, linha in enumerate(linhas_participantes, start=1):
+        for celula in linha.cells:
+            _definir_texto_celula(celula, "")
+        indice = numero - 1
+        if indice >= len(participantes):
+            continue
+        participante = participantes.iloc[indice]
+        celulas = linha.cells
+        _definir_texto_celula(celulas[0], numero)
+        _definir_texto_celula(celulas[1], participante.get("nome", ""))
+        _definir_texto_celula(celulas[4], participante.get("cargo", "") or "")
+        _definir_texto_celula(celulas[6], participante.get("instituicao", "") or "")
+        _definir_texto_celula(celulas[7], participante.get("vinculo", "") or "")
+        # As células de assinatura permanecem vazias.
+
+    saida = BytesIO()
+    documento.save(saida)
+    saida.seek(0)
+    return saida.getvalue()
+
+
+def exibir_historico_individual():
+    st.header("Histórico individual de assiduidade")
+    dados = carregar_relatorio_interno()
+    if dados.empty:
+        st.info("Ainda não há participações internas registradas.")
+        return
+
+    dados["data_filtro"] = pd.to_datetime(dados["data"], errors="coerce")
+    datas = dados["data_filtro"].dropna()
+    inicio = datas.min().date() if not datas.empty else date.today()
+    fim = datas.max().date() if not datas.empty else date.today()
+
+    with st.expander("Filtros do histórico", expanded=True):
+        f1, f2, f3 = st.columns(3)
+        with f1:
+            periodo = st.date_input(
+                "Período", value=(inicio, fim), key="historico_periodo"
+            )
+        with f2:
+            cargos = sorted(dados["cargo"].fillna("").astype(str).unique().tolist())
+            cargo = st.multiselect("Cargo", cargos, key="historico_cargo")
+        with f3:
+            situacoes = st.multiselect(
+                "Situação", options=SITUACOES, default=SITUACOES,
+                key="historico_situacoes",
+            )
+
+    if isinstance(periodo, tuple) and len(periodo) == 2:
+        data_inicio, data_fim = periodo
+    else:
+        data_inicio = data_fim = periodo
+
+    filtrado = dados[
+        dados["data_filtro"].dt.date.between(data_inicio, data_fim)
+        & dados["situacao"].isin(situacoes)
+    ].copy()
+    if cargo:
+        filtrado = filtrado[filtrado["cargo"].isin(cargo)]
+
+    if filtrado.empty:
+        st.info("Nenhuma participação encontrada com os filtros selecionados.")
+        return
+
+    opcoes = {
+        f'{r["nome"]} | Matrícula: {r["matricula"] or "não informada"}': int(r["colaborador_id"])
+        for _, r in filtrado[["colaborador_id", "nome", "matricula"]]
+        .drop_duplicates("colaborador_id").sort_values("nome").iterrows()
+    }
+    selecionado = st.selectbox("Colaborador", list(opcoes.keys()))
+    colaborador_id = opcoes[selecionado]
+    individual = filtrado[filtrado["colaborador_id"] == colaborador_id].copy()
+    resumo_individual = calcular_resumo_assiduidade(individual)
+    if not resumo_individual.empty:
+        linha = resumo_individual.iloc[0]
+        a, b, c, d = st.columns(4)
+        a.metric("Taxa de presença", f'{linha["taxa_presenca"]:.1f}%' if pd.notna(linha["taxa_presenca"]) else "—")
+        b.metric("Presenças", int(linha["presencas"]))
+        c.metric("Ausências", int(linha["ausencias"]))
+        d.metric("Pendências", int(linha["pendencias"]))
+
+    st.subheader("Evolução da assiduidade")
+    concluidos = individual[individual["resultado"].isin(["Presente", "Ausente"])].copy()
+    if concluidos.empty:
+        st.info("A evolução será exibida após a conclusão de treinamentos.")
+    else:
+        concluidos["mes"] = pd.to_datetime(concluidos["data"], errors="coerce").dt.to_period("M").astype(str)
+        evolucao = concluidos.groupby("mes").agg(
+            presencas=("resultado", lambda s: int((s == "Presente").sum())),
+            participacoes=("resultado", "size"),
+        ).reset_index()
+        evolucao["taxa_presenca"] = evolucao["presencas"] / evolucao["participacoes"] * 100
+        figura = px.line(
+            evolucao, x="mes", y="taxa_presenca", markers=True,
+            title="Taxa mensal de presença",
+        )
+        figura.update_yaxes(range=[0, 100], title="Taxa (%)")
+        figura.update_xaxes(title="Mês")
+        st.plotly_chart(figura, use_container_width=True)
+
+    st.subheader("Detalhamento por treinamento")
+    colunas = ["treinamento", "data", "data_fim", "situacao", "resultado"]
+    st.dataframe(
+        individual[colunas].rename(columns={
+            "treinamento": "Treinamento", "data": "Data inicial",
+            "data_fim": "Data final", "situacao": "Situação",
+            "resultado": "Resultado",
+        }),
+        hide_index=True, use_container_width=True,
+    )
+    st.download_button(
+        "Exportar histórico individual em CSV",
+        data=individual[colunas].to_csv(index=False, sep=";", encoding="utf-8-sig"),
+        file_name="historico_individual.csv",
+        mime="text/csv",
+    )
+
+
 # ======================================================
 # INTERFACE PRINCIPAL
 # ======================================================
@@ -640,7 +1025,7 @@ st.caption("Educação Continuada | Banco de dados PostgreSQL na nuvem")
 
 menu = st.sidebar.radio(
     "Navegação",
-    ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Relatórios"],
+    ["Visão geral", "Colaboradores", "Treinamentos", "Presenças", "Histórico individual", "Relatórios"],
 )
 
 
@@ -1420,6 +1805,10 @@ elif menu == "Presenças":
 # RELATÓRIOS
 # ======================================================
 
+elif menu == "Histórico individual":
+    exibir_historico_individual()
+
+
 elif menu == "Relatórios":
     st.header("Relatórios de assiduidade")
     resumo = consultar("""
@@ -1526,6 +1915,13 @@ elif menu == "Relatórios":
             mime="text/csv",
         )
 
+        st.download_button(
+            "Exportar relatório completo em Excel",
+            data=gerar_excel_assiduidade(resumo),
+            file_name="relatorio_assiduidade.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
+
     st.divider()
     st.subheader("Participantes externos")
     try:
@@ -1544,14 +1940,40 @@ elif menu == "Relatórios":
             st.info("Ainda não há participantes externos com presença registrada.")
         else:
             st.dataframe(externos, hide_index=True, use_container_width=True)
-            st.download_button(
-                "Exportar participantes externos",
-                data=externos.to_csv(index=False, sep=";", encoding="utf-8-sig"),
-                file_name="participantes_externos.csv",
-                mime="text/csv",
-            )
     except Exception:
         st.warning(
             "A tabela de participantes externos ainda não foi criada. "
             "Execute o arquivo SQL de atualização do banco enviado junto com esta versão."
         )
+
+    st.divider()
+    st.subheader("Gerar lista de presença — ANEXO 0185")
+    treinamentos_lista = listar_treinamentos()
+    if treinamentos_lista.empty:
+        st.info("Cadastre um treinamento para gerar a lista.")
+    else:
+        mapa_lista = {
+            formatar_treinamento(r): int(r["id"])
+            for _, r in treinamentos_lista.iterrows()
+        }
+        escolha_lista = st.selectbox(
+            "Treinamento para gerar a lista",
+            list(mapa_lista.keys()),
+            key="treinamento_lista_word",
+        )
+        if st.button("Gerar lista de presença em Word", use_container_width=True):
+            try:
+                id_lista = mapa_lista[escolha_lista]
+                titulo_lista = treinamentos_lista.loc[
+                    treinamentos_lista["id"] == id_lista, "titulo"
+                ].iloc[0]
+                arquivo_word = gerar_lista_presenca_word(id_lista, titulo_lista)
+                st.download_button(
+                    "Baixar lista de presença (.docx)",
+                    data=arquivo_word,
+                    file_name=f"lista_presenca_{id_lista}.docx",
+                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    key=f"baixar_lista_word_{id_lista}",
+                )
+            except Exception as erro:
+                st.error(f"Não foi possível gerar a lista: {erro}")
