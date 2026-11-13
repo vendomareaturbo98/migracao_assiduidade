@@ -1836,6 +1836,177 @@ elif menu == "Treinamentos":
                             "Verifique os logs do aplicativo."
                         )
 
+        st.divider()
+            st.subheader("Editar treinamento já cadastrado")
+            treinamentos_edicao = listar_treinamentos()
+            if treinamentos_edicao.empty:
+                st.info("Cadastre um treinamento antes de editar.")
+            else:
+                mapa_edicao = {
+                    formatar_treinamento(r): int(r["id"])
+                    for _, r in treinamentos_edicao.iterrows()
+                }
+                escolha_edicao = st.selectbox(
+                    "Selecione o treinamento que deseja editar",
+                    options=list(mapa_edicao.keys()),
+                    key="selecionar_treinamento_edicao_cadastro",
+                )
+                tid_edicao = mapa_edicao[escolha_edicao]
+                atual_edicao = treinamentos_edicao[
+                    treinamentos_edicao["id"] == tid_edicao
+                ].iloc[0]
+
+                colaboradores_edicao = listar_colaboradores(ativos=False)
+                elegiveis_atuais = consultar(
+                    "SELECT colaborador_id FROM elegibilidade WHERE treinamento_id = ?",
+                    (tid_edicao,),
+                )
+                ids_atuais = (
+                    set(elegiveis_atuais["colaborador_id"].astype(int).tolist())
+                    if not elegiveis_atuais.empty else set()
+                )
+                opcoes_edicao = {
+                    (
+                        f'{r["nome"]} | Cargo: {r["cargo"] or "não informado"} | '
+                        f'Matrícula: {r["matricula"] or "não informada"}'
+                        + ("" if int(r["ativo"] or 0) == 1 else " | INATIVO")
+                    ): int(r["id"])
+                    for _, r in colaboradores_edicao.iterrows()
+                }
+                nomes_atuais = [
+                    nome for nome, cid in opcoes_edicao.items() if cid in ids_atuais
+                ]
+
+                data_edicao_str = str(atual_edicao["data"])[:10]
+                try:
+                    data_edicao = date.fromisoformat(data_edicao_str)
+                except ValueError:
+                    data_edicao = date.today()
+                dia2_edicao_str = texto_data_dia2(atual_edicao["data_dia2"])
+                try:
+                    dia2_edicao = date.fromisoformat(dia2_edicao_str) if dia2_edicao_str else None
+                except ValueError:
+                    dia2_edicao = None
+                try:
+                    inicio_edicao = time.fromisoformat(str(atual_edicao["hora_inicio"]))
+                except ValueError:
+                    inicio_edicao = time(8, 0)
+                try:
+                    fim_edicao = time.fromisoformat(str(atual_edicao["hora_fim"]))
+                except ValueError:
+                    fim_edicao = time(9, 0)
+
+                with st.form(f"form_editar_dados_treinamento_{tid_edicao}"):
+                    titulo_edicao = st.text_input(
+                        "Nome do treinamento",
+                        value=str(atual_edicao["titulo"] or ""),
+                    )
+                    data_edicao_nova = st.date_input(
+                        "Data (1º dia)", value=data_edicao,
+                        key=f"cadastro_data_edicao_{tid_edicao}",
+                    )
+                    data_dia2_edicao = st.date_input(
+                        "Data do 2º dia (opcional)", value=dia2_edicao,
+                        key=f"cadastro_dia2_edicao_{tid_edicao}",
+                    )
+                    col_ed1, col_ed2 = st.columns(2)
+                    with col_ed1:
+                        hora_inicio_edicao = st.time_input(
+                            "Horário de início", value=inicio_edicao,
+                            key=f"cadastro_inicio_edicao_{tid_edicao}",
+                        )
+                    with col_ed2:
+                        hora_fim_edicao = st.time_input(
+                            "Horário de término", value=fim_edicao,
+                            key=f"cadastro_fim_edicao_{tid_edicao}",
+                        )
+                    carga_edicao = st.number_input(
+                        "Carga horária (horas)", min_value=0.25,
+                        value=max(0.25, float(atual_edicao["carga_horaria"] or 1)),
+                        step=0.25, key=f"cadastro_carga_edicao_{tid_edicao}",
+                    )
+                    publico_edicao = st.radio(
+                        "Critério de elegibilidade",
+                        ["Todos os colaboradores ativos", "Selecionar colaboradores"],
+                        index=0 if atual_edicao["publico"] == "Todos os colaboradores ativos" else 1,
+                        key=f"cadastro_publico_edicao_{tid_edicao}",
+                    )
+                    if publico_edicao == "Todos os colaboradores ativos":
+                        ids_edicao = (
+                            colaboradores_edicao[
+                                colaboradores_edicao["ativo"] == 1
+                            ]["id"].astype(int).tolist()
+                            if not colaboradores_edicao.empty else []
+                        )
+                        st.caption(f"{len(ids_edicao)} colaboradores ativos serão elegíveis.")
+                    else:
+                        selecionados_edicao = st.multiselect(
+                            "Colaboradores elegíveis",
+                            options=list(opcoes_edicao.keys()),
+                            default=nomes_atuais,
+                            key=f"cadastro_elegiveis_edicao_{tid_edicao}",
+                        )
+                        ids_edicao = [opcoes_edicao[n] for n in selecionados_edicao]
+                    observacoes_edicao = st.text_area(
+                        "Observações",
+                        value=str(atual_edicao["observacoes"] or ""),
+                        key=f"cadastro_observacoes_edicao_{tid_edicao}",
+                    )
+                    confirmar_edicao = st.form_submit_button("Salvar edição do treinamento")
+
+                    if confirmar_edicao:
+                        if not titulo_edicao.strip():
+                            st.error("Informe o nome do treinamento.")
+                        elif hora_fim_edicao <= hora_inicio_edicao:
+                            st.error("O horário de término deve ser posterior ao início.")
+                        elif data_dia2_edicao is not None and data_dia2_edicao <= data_edicao_nova:
+                            st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
+                        elif not ids_edicao:
+                            st.error("Selecione pelo menos um colaborador elegível.")
+                        else:
+                            try:
+                                with conectar() as conn:
+                                    conn.execute(
+                                        """
+                                        UPDATE treinamentos
+                                        SET titulo = ?, data = ?, data_dia2 = ?,
+                                            hora_inicio = ?, hora_fim = ?, carga_horaria = ?,
+                                            publico = ?, observacoes = ?
+                                        WHERE id = ?
+                                        """,
+                                        (
+                                            titulo_edicao.strip(),
+                                            data_edicao_nova.isoformat(),
+                                            data_dia2_edicao.isoformat() if data_dia2_edicao else None,
+                                            hora_inicio_edicao.strftime("%H:%M"),
+                                            hora_fim_edicao.strftime("%H:%M"),
+                                            float(carga_edicao), publico_edicao,
+                                            observacoes_edicao.strip(), tid_edicao,
+                                        ),
+                                    )
+                                    conn.execute(
+                                        "DELETE FROM elegibilidade WHERE treinamento_id = ?",
+                                        (tid_edicao,),
+                                    )
+                                    conn.executemany(
+                                        """
+                                        INSERT INTO elegibilidade
+                                        (treinamento_id, colaborador_id)
+                                        VALUES (?, ?)
+                                        """,
+                                        [(tid_edicao, cid) for cid in ids_edicao],
+                                    )
+                                st.session_state["aviso_treinamentos"] = (
+                                    "Dados do treinamento atualizados com sucesso. "
+                                    "O histórico de presenças foi preservado."
+                                )
+                                st.rerun()
+                            except Exception:
+                                st.error(
+                                    "Não foi possível editar o treinamento. "
+                                    "Verifique os logs do aplicativo."
+                                )
+
     with aba_status:
         # Listagem e edição de treinamentos existentes.
         st.divider()
