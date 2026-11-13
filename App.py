@@ -932,9 +932,26 @@ def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
         quantidade_extra = len(participantes) - len(linhas_participantes)
 
         for _ in range(quantidade_extra):
-            nova_linha_xml = deepcopy(linha_base._tr)
-            tabela_final._tbl.append(nova_linha_xml)
-            linhas_participantes.append(tabela_final.rows[-1])
+            # Cria uma linha nativa da tabela para evitar inconsistências
+            # de índices/células mescladas ao duplicar diretamente o XML.
+            nova_linha = tabela_final.add_row()
+
+            # Reproduz as mesclagens existentes no ANEXO 0185:
+            # nome (colunas 2 a 4), cargo (5 a 6) e vínculo (8 a 9).
+            nova_linha.cells[1].merge(nova_linha.cells[3])
+            nova_linha.cells[4].merge(nova_linha.cells[5])
+            nova_linha.cells[7].merge(nova_linha.cells[8])
+
+            # Copia as propriedades visuais das células-base equivalentes.
+            for indice_celula in (0, 1, 4, 6, 7, 9):
+                origem = linha_base.cells[indice_celula]
+                destino = nova_linha.cells[indice_celula]
+                if origem._tc.tcPr is not None:
+                    if destino._tc.tcPr is not None:
+                        destino._tc.remove(destino._tc.tcPr)
+                    destino._tc.insert(0, deepcopy(origem._tc.tcPr))
+
+            linhas_participantes.append(nova_linha)
 
     # Limpa as linhas de exemplo e preenche apenas as presenças confirmadas.
     for numero, linha in enumerate(linhas_participantes, start=1):
