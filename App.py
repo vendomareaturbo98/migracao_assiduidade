@@ -1681,343 +1681,351 @@ elif menu == "Colaboradores":
 # ======================================================
 
 elif menu == "Treinamentos":
-    st.header("Cadastro e gerenciamento de treinamentos")
+    st.header("Gerenciamento de treinamentos")
     aviso = st.session_state.pop("aviso_treinamentos", None)
     if aviso:
         st.success(aviso)
-    colaboradores = listar_colaboradores()
 
-    st.subheader("1. Definir colaboradores elegíveis")
-    publico = st.radio(
-        "Como deseja selecionar os participantes?",
-        [
-            "Todos os colaboradores ativos",
-            "Selecionar por cargo e/ou colaborador",
-        ],
-        key="publico_treinamento",
-    )
+    aba_cadastro, aba_status = st.tabs([
+        "Cadastro de novo treinamento",
+        "Alteração de status",
+    ])
 
-    ids = []
-    if publico == "Todos os colaboradores ativos":
-        ids = colaboradores["id"].astype(int).tolist() if not colaboradores.empty else []
-        st.info(f"Serão incluídos {len(ids)} colaboradores ativos.")
-    elif colaboradores.empty:
-        st.warning("Não há colaboradores cadastrados.")
-    else:
-        cargos_disponiveis = sorted(
-            colaboradores["cargo"].fillna("").astype(str).str.strip()
-            .loc[lambda s: s != ""].unique().tolist()
+    with aba_cadastro:
+        colaboradores = listar_colaboradores()
+
+        st.subheader("1. Definir colaboradores elegíveis")
+        publico = st.radio(
+            "Como deseja selecionar os participantes?",
+            [
+                "Todos os colaboradores ativos",
+                "Selecionar por cargo e/ou colaborador",
+            ],
+            key="publico_treinamento",
         )
-        cargos_selecionados = st.multiselect(
-            "Filtrar por cargo", options=cargos_disponiveis,
-            key="cargos_treinamento",
-        )
-        if cargos_selecionados:
-            filtrados = colaboradores[
-                colaboradores["cargo"].fillna("").astype(str).str.strip()
-                .isin(cargos_selecionados)
-            ].copy()
+
+        ids = []
+        if publico == "Todos os colaboradores ativos":
+            ids = colaboradores["id"].astype(int).tolist() if not colaboradores.empty else []
+            st.info(f"Serão incluídos {len(ids)} colaboradores ativos.")
+        elif colaboradores.empty:
+            st.warning("Não há colaboradores cadastrados.")
         else:
-            filtrados = colaboradores.copy()
+            cargos_disponiveis = sorted(
+                colaboradores["cargo"].fillna("").astype(str).str.strip()
+                .loc[lambda s: s != ""].unique().tolist()
+            )
+            cargos_selecionados = st.multiselect(
+                "Filtrar por cargo", options=cargos_disponiveis,
+                key="cargos_treinamento",
+            )
+            if cargos_selecionados:
+                filtrados = colaboradores[
+                    colaboradores["cargo"].fillna("").astype(str).str.strip()
+                    .isin(cargos_selecionados)
+                ].copy()
+            else:
+                filtrados = colaboradores.copy()
 
-        st.caption(f"{len(filtrados)} colaborador(es) encontrado(s).")
-        opcoes = {
-            (
-                f'{r["nome"]} | Cargo: {r["cargo"] or "não informado"} | '
-                f'Matrícula: {r["matricula"] or "não informada"}'
-            ): int(r["id"])
-            for _, r in filtrados.iterrows()
-        }
-        selecionar_todos = st.checkbox(
-            "Selecionar todos os colaboradores exibidos",
-            key="selecionar_todos_treinamento",
-        )
-        if selecionar_todos:
-            # Permite tirar colaboradores específicos mesmo com o grupo inteiro marcado.
-            excecoes = st.multiselect(
-                "Remover colaboradores da seleção (opcional)",
-                options=list(opcoes.keys()),
-                key="excecoes_selecao_treinamento",
+            st.caption(f"{len(filtrados)} colaborador(es) encontrado(s).")
+            opcoes = {
+                (
+                    f'{r["nome"]} | Cargo: {r["cargo"] or "não informado"} | '
+                    f'Matrícula: {r["matricula"] or "não informada"}'
+                ): int(r["id"])
+                for _, r in filtrados.iterrows()
+            }
+            selecionar_todos = st.checkbox(
+                "Selecionar todos os colaboradores exibidos",
+                key="selecionar_todos_treinamento",
+            )
+            if selecionar_todos:
+                # Permite tirar colaboradores específicos mesmo com o grupo inteiro marcado.
+                excecoes = st.multiselect(
+                    "Remover colaboradores da seleção (opcional)",
+                    options=list(opcoes.keys()),
+                    key="excecoes_selecao_treinamento",
+                    help=(
+                        "Todos os colaboradores exibidos serão incluídos, "
+                        "exceto os que você escolher aqui."
+                    ),
+                )
+                ids = [cid for nome, cid in opcoes.items() if nome not in excecoes]
+                if excecoes:
+                    st.caption(
+                        f"{len(excecoes)} colaborador(es) removido(s) da seleção."
+                    )
+            else:
+                selecionados = st.multiselect(
+                    "Escolha os colaboradores", options=list(opcoes.keys()),
+                    key="colaboradores_especificos_treinamento",
+                )
+                ids = [opcoes[nome] for nome in selecionados]
+
+            st.caption(f"Total de participantes selecionados: {len(ids)}")
+
+        st.divider()
+        st.subheader("2. Informações do novo treinamento")
+        with st.form("form_treinamento"):
+            titulo = st.text_input("Nome do treinamento")
+            data_treinamento = st.date_input("Data (1º dia)", value=date.today())
+            data_dia2_novo = st.date_input(
+                "Data do 2º dia (opcional)",
+                value=None,
                 help=(
-                    "Todos os colaboradores exibidos serão incluídos, "
-                    "exceto os que você escolher aqui."
+                    "Preencha apenas se o mesmo treinamento for dividido em dois dias. "
+                    "Quem comparecer em qualquer um dos dias conta como presente."
                 ),
             )
-            ids = [cid for nome, cid in opcoes.items() if nome not in excecoes]
-            if excecoes:
-                st.caption(
-                    f"{len(excecoes)} colaborador(es) removido(s) da seleção."
-                )
-        else:
-            selecionados = st.multiselect(
-                "Escolha os colaboradores", options=list(opcoes.keys()),
-                key="colaboradores_especificos_treinamento",
+            col1, col2 = st.columns(2)
+            with col1:
+                hora_inicio = st.time_input("Horário de início", value=time(8, 0))
+            with col2:
+                hora_fim = st.time_input("Horário de término", value=time(9, 0))
+            carga = st.number_input(
+                "Carga horária (horas)", min_value=0.25, value=1.0, step=0.25
             )
-            ids = [opcoes[nome] for nome in selecionados]
-
-        st.caption(f"Total de participantes selecionados: {len(ids)}")
-
-    st.divider()
-    st.subheader("2. Informações do novo treinamento")
-    with st.form("form_treinamento"):
-        titulo = st.text_input("Nome do treinamento")
-        data_treinamento = st.date_input("Data (1º dia)", value=date.today())
-        data_dia2_novo = st.date_input(
-            "Data do 2º dia (opcional)",
-            value=None,
-            help=(
-                "Preencha apenas se o mesmo treinamento for dividido em dois dias. "
-                "Quem comparecer em qualquer um dos dias conta como presente."
-            ),
-        )
-        col1, col2 = st.columns(2)
-        with col1:
-            hora_inicio = st.time_input("Horário de início", value=time(8, 0))
-        with col2:
-            hora_fim = st.time_input("Horário de término", value=time(9, 0))
-        carga = st.number_input(
-            "Carga horária (horas)", min_value=0.25, value=1.0, step=0.25
-        )
-        situacao_novo = st.selectbox(
-            "Situação inicial", SITUACOES, index=0,
-            help="Use Realizado somente quando o treinamento já tiver ocorrido.",
-        )
-        observacoes = st.text_area("Observações")
-        salvar = st.form_submit_button("Salvar treinamento")
-
-        if salvar:
-            if not titulo.strip():
-                st.error("Informe o nome do treinamento.")
-            elif hora_fim <= hora_inicio:
-                st.error("O horário de término deve ser posterior ao início.")
-            elif data_dia2_novo is not None and data_dia2_novo <= data_treinamento:
-                st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
-            elif not ids:
-                st.error("Selecione pelo menos um colaborador elegível.")
-            else:
-                try:
-                    with conectar() as conn:
-                        cursor = conn.execute(
-                            """
-                            INSERT INTO treinamentos
-                            (titulo, data, data_dia2, hora_inicio, hora_fim,
-                             carga_horaria, publico, situacao, observacoes)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            """,
-                            (
-                                titulo.strip(), data_treinamento.isoformat(),
-                                data_dia2_novo.isoformat() if data_dia2_novo else None,
-                                hora_inicio.strftime("%H:%M"),
-                                hora_fim.strftime("%H:%M"), float(carga),
-                                publico, situacao_novo, observacoes.strip(),
-                            ),
-                        )
-                        treinamento_id = cursor.lastrowid
-                        conn.executemany(
-                            """
-                            INSERT INTO elegibilidade
-                            (treinamento_id, colaborador_id)
-                            VALUES (?, ?)
-                            """,
-                            [(treinamento_id, cid) for cid in ids],
-                        )
-                    st.success("Treinamento cadastrado com sucesso.")
-                    st.rerun()
-                except Exception:
-                    st.error(
-                        "Não foi possível salvar o treinamento. "
-                        "Verifique os logs do aplicativo."
-                    )
-
-    # Listagem e edição de treinamentos existentes.
-    st.divider()
-    st.subheader("3. Treinamentos cadastrados")
-    treinamentos = listar_treinamentos()
-    if treinamentos.empty:
-        st.info("Nenhum treinamento cadastrado.")
-    else:
-        st.dataframe(
-            treinamentos[
-                ["id", "titulo", "data", "data_dia2", "hora_inicio", "hora_fim",
-                 "carga_horaria", "publico", "situacao"]
-            ],
-            hide_index=True,
-            use_container_width=True,
-            column_config={
-                "data_dia2": st.column_config.TextColumn("Data do 2º dia"),
-            },
-        )
-
-        st.markdown("### Alterar status ou remarcar treinamento")
-        mapa = {
-            formatar_treinamento(r): int(r["id"])
-            for _, r in treinamentos.iterrows()
-        }
-        escolha = st.selectbox(
-            "Selecione o treinamento que deseja alterar",
-            options=list(mapa.keys()),
-            key="editar_treinamento_escolha",
-        )
-        tid_editar = mapa[escolha]
-        atual = treinamentos[treinamentos["id"] == tid_editar].iloc[0]
-
-        status_atual = str(atual["situacao"])
-        data_atual_str = str(atual["data"])[:10]
-        try:
-            data_atual = date.fromisoformat(data_atual_str)
-        except ValueError:
-            data_atual = date.today()
-
-        dia2_atual_str = texto_data_dia2(atual["data_dia2"])
-        try:
-            dia2_atual = date.fromisoformat(dia2_atual_str) if dia2_atual_str else None
-        except ValueError:
-            dia2_atual = None
-
-        st.caption(
-            f"Status atual: **{status_atual}** | "
-            f"Data atual: **{data_atual_str}**"
-            + (f" | 2º dia: **{dia2_atual_str}**" if dia2_atual_str else "")
-        )
-        with st.form(f"form_editar_treinamento_{tid_editar}"):
-            novo_status = st.selectbox(
-                "Novo status",
-                SITUACOES,
-                index=SITUACOES.index(status_atual)
-                if status_atual in SITUACOES else 0,
+            situacao_novo = st.selectbox(
+                "Situação inicial", SITUACOES, index=0,
+                help="Use Realizado somente quando o treinamento já tiver ocorrido.",
             )
-            nova_data = st.date_input("Data do treinamento (1º dia)", value=data_atual)
-            nova_data_dia2 = st.date_input(
-                "Data do 2º dia (opcional)",
-                value=dia2_atual,
-                key=f"data_dia2_treinamento_{tid_editar}",
-                help="Deixe vazio para treinamentos de um único dia.",
-            )
-            nova_observacao = st.text_area(
-                "Observações",
-                value=str(atual["observacoes"] or ""),
-                key=f"observacoes_treinamento_{tid_editar}",
-            )
-            salvar_alteracao = st.form_submit_button("Salvar alterações")
+            observacoes = st.text_area("Observações")
+            salvar = st.form_submit_button("Salvar treinamento")
 
-            if salvar_alteracao:
-                if novo_status == "Remarcado" and nova_data == data_atual:
-                    st.warning(
-                        "O status será salvo como Remarcado, mas a data não mudou. "
-                        "Se houve mudança de data, informe a nova data."
-                    )
-                if (
-                    status_atual == "Realizado"
-                    and novo_status in ("Agendado", "Remarcado")
-                ):
-                    st.warning(
-                        "Você está reabrindo um treinamento já marcado como realizado. "
-                        "Confira se essa alteração é realmente necessária."
-                    )
-                if nova_data_dia2 is not None and nova_data_dia2 <= nova_data:
+            if salvar:
+                if not titulo.strip():
+                    st.error("Informe o nome do treinamento.")
+                elif hora_fim <= hora_inicio:
+                    st.error("O horário de término deve ser posterior ao início.")
+                elif data_dia2_novo is not None and data_dia2_novo <= data_treinamento:
                     st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
+                elif not ids:
+                    st.error("Selecione pelo menos um colaborador elegível.")
                 else:
                     try:
                         with conectar() as conn:
-                            resultado = conn.execute(
+                            cursor = conn.execute(
                                 """
-                                UPDATE treinamentos
-                                SET situacao = ?, data = ?, data_dia2 = ?, observacoes = ?
-                                WHERE id = ?
+                                INSERT INTO treinamentos
+                                (titulo, data, data_dia2, hora_inicio, hora_fim,
+                                 carga_horaria, publico, situacao, observacoes)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                                 """,
                                 (
-                                    novo_status, nova_data.isoformat(),
-                                    nova_data_dia2.isoformat() if nova_data_dia2 else None,
-                                    nova_observacao.strip(), tid_editar,
+                                    titulo.strip(), data_treinamento.isoformat(),
+                                    data_dia2_novo.isoformat() if data_dia2_novo else None,
+                                    hora_inicio.strftime("%H:%M"),
+                                    hora_fim.strftime("%H:%M"), float(carga),
+                                    publico, situacao_novo, observacoes.strip(),
                                 ),
                             )
-                        if resultado.rowcount == 1:
-                            st.success("Treinamento atualizado com sucesso.")
-                            st.rerun()
-                        else:
-                            st.error("O treinamento não foi encontrado para atualização.")
+                            treinamento_id = cursor.lastrowid
+                            conn.executemany(
+                                """
+                                INSERT INTO elegibilidade
+                                (treinamento_id, colaborador_id)
+                                VALUES (?, ?)
+                                """,
+                                [(treinamento_id, cid) for cid in ids],
+                            )
+                        st.success("Treinamento cadastrado com sucesso.")
+                        st.rerun()
                     except Exception:
                         st.error(
-                            "Não foi possível atualizar o treinamento. "
+                            "Não foi possível salvar o treinamento. "
                             "Verifique os logs do aplicativo."
                         )
 
-    # Mantém exclusão restrita aos agendados, como na versão anterior.
-    st.divider()
-    st.subheader("4. Excluir treinamento agendado")
-    if treinamentos.empty:
-        st.info("Não há treinamentos para excluir.")
-    else:
-        agendados = treinamentos[treinamentos["situacao"] == "Agendado"].copy()
-        if agendados.empty:
-            st.info("Não há treinamentos agendados disponíveis para exclusão.")
+    with aba_status:
+        # Listagem e edição de treinamentos existentes.
+        st.divider()
+        st.subheader("3. Treinamentos cadastrados")
+        treinamentos = listar_treinamentos()
+        if treinamentos.empty:
+            st.info("Nenhum treinamento cadastrado.")
         else:
-            opcoes_exclusao = {
+            st.dataframe(
+                treinamentos[
+                    ["id", "titulo", "data", "data_dia2", "hora_inicio", "hora_fim",
+                     "carga_horaria", "publico", "situacao"]
+                ],
+                hide_index=True,
+                use_container_width=True,
+                column_config={
+                    "data_dia2": st.column_config.TextColumn("Data do 2º dia"),
+                },
+            )
+
+            st.markdown("### Alterar status ou remarcar treinamento")
+            mapa = {
                 formatar_treinamento(r): int(r["id"])
-                for _, r in agendados.iterrows()
+                for _, r in treinamentos.iterrows()
             }
-            escolha_exclusao = st.selectbox(
-                "Selecione o treinamento agendado",
-                options=list(opcoes_exclusao.keys()),
-                key="treinamento_excluir",
+            escolha = st.selectbox(
+                "Selecione o treinamento que deseja alterar",
+                options=list(mapa.keys()),
+                key="editar_treinamento_escolha",
             )
-            confirmar_exclusao = st.checkbox(
-                "Confirmo que desejo excluir este treinamento agendado.",
-                key="confirmar_exclusao_treinamento",
+            tid_editar = mapa[escolha]
+            atual = treinamentos[treinamentos["id"] == tid_editar].iloc[0]
+
+            status_atual = str(atual["situacao"])
+            data_atual_str = str(atual["data"])[:10]
+            try:
+                data_atual = date.fromisoformat(data_atual_str)
+            except ValueError:
+                data_atual = date.today()
+
+            dia2_atual_str = texto_data_dia2(atual["data_dia2"])
+            try:
+                dia2_atual = date.fromisoformat(dia2_atual_str) if dia2_atual_str else None
+            except ValueError:
+                dia2_atual = None
+
+            st.caption(
+                f"Status atual: **{status_atual}** | "
+                f"Data atual: **{data_atual_str}**"
+                + (f" | 2º dia: **{dia2_atual_str}**" if dia2_atual_str else "")
             )
-            if st.button(
-                "Excluir treinamento",
-                disabled=not confirmar_exclusao,
-                key="botao_excluir_treinamento",
-            ):
-                id_excluir = opcoes_exclusao[escolha_exclusao]
-                excluido = False
-                try:
-                    with conectar() as conn:
-                        registro = conn.execute(
-                            "SELECT situacao FROM treinamentos WHERE id = ?",
-                            (id_excluir,),
-                        ).fetchone()
-                        if registro is None:
-                            st.error("O treinamento não foi encontrado.")
-                        elif registro["situacao"] != "Agendado":
-                            st.error(
-                                "Só é permitido excluir treinamentos com status Agendado."
-                            )
-                        else:
-                            # Remove os registros dependentes antes do treinamento.
-                            conn.execute(
-                                "DELETE FROM presencas WHERE treinamento_id = ?",
-                                (id_excluir,),
-                            )
-                            conn.execute(
-                                "DELETE FROM elegibilidade WHERE treinamento_id = ?",
-                                (id_excluir,),
-                            )
-                            resultado = conn.execute(
-                                """
-                                DELETE FROM treinamentos
-                                WHERE id = ? AND situacao = 'Agendado'
-                                """,
-                                (id_excluir,),
-                            )
-                            if resultado.rowcount == 1:
-                                excluido = True
-                            else:
-                                st.error("Nenhum treinamento foi excluído.")
-                    # O bloco "with" já terminou: o COMMIT foi feito.
-                    # st.rerun() precisa vir depois, nunca dentro do "with".
-                    if excluido:
-                        st.session_state["aviso_treinamentos"] = (
-                            "Treinamento excluído com sucesso."
+            with st.form(f"form_editar_treinamento_{tid_editar}"):
+                novo_status = st.selectbox(
+                    "Novo status",
+                    SITUACOES,
+                    index=SITUACOES.index(status_atual)
+                    if status_atual in SITUACOES else 0,
+                )
+                nova_data = st.date_input("Data do treinamento (1º dia)", value=data_atual)
+                nova_data_dia2 = st.date_input(
+                    "Data do 2º dia (opcional)",
+                    value=dia2_atual,
+                    key=f"data_dia2_treinamento_{tid_editar}",
+                    help="Deixe vazio para treinamentos de um único dia.",
+                )
+                nova_observacao = st.text_area(
+                    "Observações",
+                    value=str(atual["observacoes"] or ""),
+                    key=f"observacoes_treinamento_{tid_editar}",
+                )
+                salvar_alteracao = st.form_submit_button("Salvar alterações")
+
+                if salvar_alteracao:
+                    if novo_status == "Remarcado" and nova_data == data_atual:
+                        st.warning(
+                            "O status será salvo como Remarcado, mas a data não mudou. "
+                            "Se houve mudança de data, informe a nova data."
                         )
-                        st.session_state.pop("confirmar_exclusao_treinamento", None)
-                        st.rerun()
-                except Exception:
-                    st.error(
-                        "Não foi possível excluir o treinamento. "
-                        "Verifique os logs do aplicativo."
-                    )
+                    if (
+                        status_atual == "Realizado"
+                        and novo_status in ("Agendado", "Remarcado")
+                    ):
+                        st.warning(
+                            "Você está reabrindo um treinamento já marcado como realizado. "
+                            "Confira se essa alteração é realmente necessária."
+                        )
+                    if nova_data_dia2 is not None and nova_data_dia2 <= nova_data:
+                        st.error("A data do 2º dia deve ser posterior à data do 1º dia.")
+                    else:
+                        try:
+                            with conectar() as conn:
+                                resultado = conn.execute(
+                                    """
+                                    UPDATE treinamentos
+                                    SET situacao = ?, data = ?, data_dia2 = ?, observacoes = ?
+                                    WHERE id = ?
+                                    """,
+                                    (
+                                        novo_status, nova_data.isoformat(),
+                                        nova_data_dia2.isoformat() if nova_data_dia2 else None,
+                                        nova_observacao.strip(), tid_editar,
+                                    ),
+                                )
+                            if resultado.rowcount == 1:
+                                st.success("Treinamento atualizado com sucesso.")
+                                st.rerun()
+                            else:
+                                st.error("O treinamento não foi encontrado para atualização.")
+                        except Exception:
+                            st.error(
+                                "Não foi possível atualizar o treinamento. "
+                                "Verifique os logs do aplicativo."
+                            )
+
+        # Mantém exclusão restrita aos agendados, como na versão anterior.
+        st.divider()
+        st.subheader("4. Excluir treinamento agendado")
+        if treinamentos.empty:
+            st.info("Não há treinamentos para excluir.")
+        else:
+            agendados = treinamentos[treinamentos["situacao"] == "Agendado"].copy()
+            if agendados.empty:
+                st.info("Não há treinamentos agendados disponíveis para exclusão.")
+            else:
+                opcoes_exclusao = {
+                    formatar_treinamento(r): int(r["id"])
+                    for _, r in agendados.iterrows()
+                }
+                escolha_exclusao = st.selectbox(
+                    "Selecione o treinamento agendado",
+                    options=list(opcoes_exclusao.keys()),
+                    key="treinamento_excluir",
+                )
+                confirmar_exclusao = st.checkbox(
+                    "Confirmo que desejo excluir este treinamento agendado.",
+                    key="confirmar_exclusao_treinamento",
+                )
+                if st.button(
+                    "Excluir treinamento",
+                    disabled=not confirmar_exclusao,
+                    key="botao_excluir_treinamento",
+                ):
+                    id_excluir = opcoes_exclusao[escolha_exclusao]
+                    excluido = False
+                    try:
+                        with conectar() as conn:
+                            registro = conn.execute(
+                                "SELECT situacao FROM treinamentos WHERE id = ?",
+                                (id_excluir,),
+                            ).fetchone()
+                            if registro is None:
+                                st.error("O treinamento não foi encontrado.")
+                            elif registro["situacao"] != "Agendado":
+                                st.error(
+                                    "Só é permitido excluir treinamentos com status Agendado."
+                                )
+                            else:
+                                # Remove os registros dependentes antes do treinamento.
+                                conn.execute(
+                                    "DELETE FROM presencas WHERE treinamento_id = ?",
+                                    (id_excluir,),
+                                )
+                                conn.execute(
+                                    "DELETE FROM elegibilidade WHERE treinamento_id = ?",
+                                    (id_excluir,),
+                                )
+                                resultado = conn.execute(
+                                    """
+                                    DELETE FROM treinamentos
+                                    WHERE id = ? AND situacao = 'Agendado'
+                                    """,
+                                    (id_excluir,),
+                                )
+                                if resultado.rowcount == 1:
+                                    excluido = True
+                                else:
+                                    st.error("Nenhum treinamento foi excluído.")
+                        # O bloco "with" já terminou: o COMMIT foi feito.
+                        # st.rerun() precisa vir depois, nunca dentro do "with".
+                        if excluido:
+                            st.session_state["aviso_treinamentos"] = (
+                                "Treinamento excluído com sucesso."
+                            )
+                            st.session_state.pop("confirmar_exclusao_treinamento", None)
+                            st.rerun()
+                    except Exception:
+                        st.error(
+                            "Não foi possível excluir o treinamento. "
+                            "Verifique os logs do aplicativo."
+                        )
 
 
 # ======================================================
