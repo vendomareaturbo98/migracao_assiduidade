@@ -8,6 +8,7 @@ from pathlib import Path
 
 from docx import Document
 from openpyxl.chart import BarChart, DoughnutChart, LineChart, Reference
+from openpyxl.chart.label import DataLabelList
 
 import pandas as pd
 import plotly.express as px
@@ -890,6 +891,10 @@ def gerar_excel_assiduidade(dados):
             grafico_situacao.holeSize = 55
             grafico_situacao.height = 8
             grafico_situacao.width = 13
+            grafico_situacao.dataLabels = DataLabelList()
+            grafico_situacao.dataLabels.showPercent = True
+            grafico_situacao.dataLabels.showVal = False
+            grafico_situacao.dataLabels.showCatName = True
             grafico_situacao.add_data(
                 Reference(ws_panorama, min_col=2, min_row=2, max_row=len(situacoes) + 2),
                 titles_from_data=True,
@@ -908,6 +913,10 @@ def gerar_excel_assiduidade(dados):
             grafico_resultados.x_axis.title = "Resultado"
             grafico_resultados.height = 8
             grafico_resultados.width = 13
+            grafico_resultados.y_axis.numFmt = "0"
+            grafico_resultados.y_axis.majorUnit = 1
+            grafico_resultados.dataLabels = DataLabelList()
+            grafico_resultados.dataLabels.showVal = True
             grafico_resultados.add_data(
                 Reference(ws_panorama, min_col=6, min_row=2, max_row=len(resultados) + 2),
                 titles_from_data=True,
@@ -927,6 +936,11 @@ def gerar_excel_assiduidade(dados):
             grafico_mensal.x_axis.title = "Mês"
             grafico_mensal.y_axis.scaling.min = 0
             grafico_mensal.y_axis.scaling.max = 100
+            grafico_mensal.y_axis.majorUnit = 10
+            grafico_mensal.y_axis.numFmt = '0"%"'
+            grafico_mensal.dataLabels = DataLabelList()
+            grafico_mensal.dataLabels.showVal = True
+            grafico_mensal.dataLabels.numFmt = '0.0"%"'
             grafico_mensal.height = 8
             grafico_mensal.width = 14
             grafico_mensal.add_data(
@@ -949,6 +963,10 @@ def gerar_excel_assiduidade(dados):
             grafico_cargo.x_axis.title = "Cargo"
             grafico_cargo.height = 8
             grafico_cargo.width = 14
+            grafico_cargo.y_axis.numFmt = "0"
+            grafico_cargo.y_axis.majorUnit = 1
+            grafico_cargo.dataLabels = DataLabelList()
+            grafico_cargo.dataLabels.showVal = True
             grafico_cargo.add_data(
                 Reference(ws_assiduidade, min_col=7, max_col=8, min_row=2, max_row=len(por_cargo) + 2),
                 titles_from_data=True,
