@@ -420,3 +420,28 @@ input::placeholder, textarea::placeholder { color: var(--muted) !important; opac
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* ------------------------------------------------------------------
+   Autenticação na barra lateral
+------------------------------------------------------------------- */
+/* O texto de conexão permanece branco, inclusive sobre a regra global de captions. */
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"],
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] *,
+section[data-testid="stSidebar"] [data-testid="stCaptionContainer"] p {
+  color: #FFFFFF !important;
+}
+
+/* Botão Sair: fundo branco e fonte no azul profundo da navegação lateral. */
+section[data-testid="stSidebar"] .st-key-botao_sair button {
+  background: #FFFFFF !important;
+  border: 1px solid #FFFFFF !important;
+  color: var(--navy-deep) !important;
+}
+section[data-testid="stSidebar"] .st-key-botao_sair button *,
+section[data-testid="stSidebar"] .st-key-botao_sair button p {
+  color: var(--navy-deep) !important;
+}
+section[data-testid="stSidebar"] .st-key-botao_sair button:hover {
+  background: #EAF0F7 !important;
+  border-color: #EAF0F7 !important;
+}
