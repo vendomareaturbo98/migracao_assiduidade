@@ -313,6 +313,7 @@ def carregar_participacoes_dashboard():
         SELECT * FROM (
             SELECT
                 t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
                 t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
                 c.cargo, p.presente
             FROM elegibilidade e
@@ -326,6 +327,7 @@ def carregar_participacoes_dashboard():
 
             SELECT
                 t.id AS treinamento_id, t.titulo AS treinamento, t.data,
+                COALESCE(t.data_dia2, t.data::text) AS data_fim,
                 t.situacao, c.id AS colaborador_id, c.nome, c.matricula,
                 c.cargo, p.presente
             FROM presencas p
