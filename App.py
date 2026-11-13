@@ -7,7 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from docx import Document
-from openpyxl.chart import BarChart, Reference
+from openpyxl.chart import BarChart, DoughnutChart, LineChart, Reference
 
 import pandas as pd
 import plotly.express as px
