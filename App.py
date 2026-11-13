@@ -8,7 +8,7 @@ from pathlib import Path
 
 from docx import Document
 from openpyxl.chart import BarChart, DoughnutChart, LineChart, Reference
-from openpyxl.chart.label import DataLabelList
+from openpyxl.chart.label import DataLabel, DataLabelList
 
 import pandas as pd
 import plotly.express as px
@@ -769,6 +769,21 @@ def gerar_excel_assiduidade(dados):
     dados = dados.copy() if dados is not None else pd.DataFrame()
     resumo = calcular_resumo_assiduidade(dados)
 
+    def rotulos_percentuais(valores, formato='0.0"%"'):
+        """Exibe somente percentuais acima de 5%, sem nomes ou valores extras."""
+        rotulos = DataLabelList()
+        rotulos.showVal = True
+        rotulos.showCatName = False
+        rotulos.showSerName = False
+        rotulos.showLegendKey = False
+        rotulos.numFmt = formato
+        rotulos.dLbls = [
+            DataLabel(idx=i, showVal=False)
+            for i, valor in enumerate(valores)
+            if pd.notna(valor) and float(valor) <= 5
+        ]
+        return rotulos
+
     colunas_participacoes = [
         "treinamento_id", "treinamento", "data", "data_fim", "situacao",
         "nome", "matricula", "cargo", "presente", "resultado",
@@ -817,6 +832,10 @@ def gerar_excel_assiduidade(dados):
         )
         .rename_axis("Resultado").reset_index(name="Quantidade")
     )
+    total_resultados = int(resultados["Quantidade"].sum())
+    resultados["Percentual"] = (
+        resultados["Quantidade"] / total_resultados * 100
+    ).round(1) if total_resultados else 0.0
 
     # Bases dos gráficos da aba Assiduidade: somente participações concluídas.
     concluidas = dados[
@@ -848,8 +867,17 @@ def gerar_excel_assiduidade(dados):
             if coluna not in por_cargo.columns:
                 por_cargo[coluna] = 0
         por_cargo = por_cargo[["Cargo", "Presente", "Ausente"]]
+        total_cargo = por_cargo["Presente"] + por_cargo["Ausente"]
+        por_cargo["% Presente"] = (
+            por_cargo["Presente"] / total_cargo * 100
+        ).where(total_cargo.gt(0), 0).round(1)
+        por_cargo["% Ausente"] = (
+            por_cargo["Ausente"] / total_cargo * 100
+        ).where(total_cargo.gt(0), 0).round(1)
     else:
-        por_cargo = pd.DataFrame(columns=["Cargo", "Presente", "Ausente"])
+        por_cargo = pd.DataFrame(columns=[
+            "Cargo", "Presente", "Ausente", "% Presente", "% Ausente"
+        ])
 
     # Monitoramento individual permanece exclusivamente em formato tabular.
     if not resumo.empty:
@@ -894,7 +922,15 @@ def gerar_excel_assiduidade(dados):
             grafico_situacao.dataLabels = DataLabelList()
             grafico_situacao.dataLabels.showPercent = True
             grafico_situacao.dataLabels.showVal = False
-            grafico_situacao.dataLabels.showCatName = True
+            grafico_situacao.dataLabels.showCatName = False
+            grafico_situacao.dataLabels.showSerName = False
+            total_situacoes = float(situacoes["Quantidade"].sum())
+            grafico_situacao.dataLabels.dLbls = [
+                DataLabel(idx=i, showPercent=False)
+                for i, quantidade in enumerate(situacoes["Quantidade"])
+                if total_situacoes and quantidade / total_situacoes * 100 <= 5
+            ]
+            grafico_situacao.legend = None
             grafico_situacao.add_data(
                 Reference(ws_panorama, min_col=2, min_row=2, max_row=len(situacoes) + 2),
                 titles_from_data=True,
@@ -909,21 +945,24 @@ def gerar_excel_assiduidade(dados):
             grafico_resultados.type = "col"
             grafico_resultados.style = 10
             grafico_resultados.title = "Resultado das participações"
-            grafico_resultados.y_axis.title = "Participações"
+            grafico_resultados.y_axis.title = "Percentual (%)"
             grafico_resultados.x_axis.title = "Resultado"
+            grafico_resultados.y_axis.scaling.min = 0
+            grafico_resultados.y_axis.scaling.max = 100
+            grafico_resultados.y_axis.majorUnit = 10
+            grafico_resultados.y_axis.numFmt = '0"%"'
             grafico_resultados.height = 8
             grafico_resultados.width = 13
             grafico_resultados.y_axis.numFmt = "0"
             grafico_resultados.y_axis.majorUnit = 1
-            grafico_resultados.dataLabels = DataLabelList()
-            grafico_resultados.dataLabels.showVal = True
             grafico_resultados.add_data(
-                Reference(ws_panorama, min_col=6, min_row=2, max_row=len(resultados) + 2),
+                Reference(ws_panorama, min_col=7, min_row=2, max_row=len(resultados) + 2),
                 titles_from_data=True,
             )
             grafico_resultados.set_categories(
                 Reference(ws_panorama, min_col=5, min_row=3, max_row=len(resultados) + 2)
             )
+            grafico_resultados.series[0].dLbls = rotulos_percentuais(resultados["Percentual"])
             ws_panorama.add_chart(grafico_resultados, "H9")
 
         ws_assiduidade = wb["Assiduidade"]
@@ -938,9 +977,7 @@ def gerar_excel_assiduidade(dados):
             grafico_mensal.y_axis.scaling.max = 100
             grafico_mensal.y_axis.majorUnit = 10
             grafico_mensal.y_axis.numFmt = '0"%"'
-            grafico_mensal.dataLabels = DataLabelList()
-            grafico_mensal.dataLabels.showVal = True
-            grafico_mensal.dataLabels.numFmt = '0.0"%"'
+            grafico_mensal.dataLabels = rotulos_percentuais(mensal["Taxa de presença (%)"])
             grafico_mensal.height = 8
             grafico_mensal.width = 14
             grafico_mensal.add_data(
@@ -959,21 +996,23 @@ def gerar_excel_assiduidade(dados):
             grafico_cargo.overlap = 0
             grafico_cargo.style = 10
             grafico_cargo.title = "Presença por cargo"
-            grafico_cargo.y_axis.title = "Participações"
+            grafico_cargo.y_axis.title = "Percentual (%)"
             grafico_cargo.x_axis.title = "Cargo"
+            grafico_cargo.y_axis.scaling.min = 0
+            grafico_cargo.y_axis.scaling.max = 100
+            grafico_cargo.y_axis.majorUnit = 10
+            grafico_cargo.y_axis.numFmt = '0"%"'
             grafico_cargo.height = 8
             grafico_cargo.width = 14
-            grafico_cargo.y_axis.numFmt = "0"
-            grafico_cargo.y_axis.majorUnit = 1
-            grafico_cargo.dataLabels = DataLabelList()
-            grafico_cargo.dataLabels.showVal = True
             grafico_cargo.add_data(
-                Reference(ws_assiduidade, min_col=7, max_col=8, min_row=2, max_row=len(por_cargo) + 2),
+                Reference(ws_assiduidade, min_col=9, max_col=10, min_row=2, max_row=len(por_cargo) + 2),
                 titles_from_data=True,
             )
             grafico_cargo.set_categories(
                 Reference(ws_assiduidade, min_col=6, min_row=3, max_row=len(por_cargo) + 2)
             )
+            grafico_cargo.series[0].dLbls = rotulos_percentuais(por_cargo["% Presente"])
+            grafico_cargo.series[1].dLbls = rotulos_percentuais(por_cargo["% Ausente"])
             ws_assiduidade.add_chart(grafico_cargo, "H8")
 
         for planilha in wb.worksheets:
