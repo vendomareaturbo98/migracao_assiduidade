@@ -1,4 +1,5 @@
 import os
+from copy import deepcopy
 import re
 import unicodedata
 from datetime import date, time
@@ -891,11 +892,37 @@ def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
                 if len(linha.cells) >= 10:
                     linhas_participantes.append(linha)
 
+    # O modelo é usado apenas como referência visual. Se houver mais
+    # participantes do que linhas disponíveis, cria novas linhas com a mesma
+    # estrutura e formatação da última linha de participantes.
     if len(participantes) > len(linhas_participantes):
-        raise ValueError(
-            f"O modelo comporta {len(linhas_participantes)} participantes; "
-            f"há {len(participantes)} presenças confirmadas."
-        )
+        tabelas_com_participantes = []
+        for tabela in documento.tables:
+            for indice, linha in enumerate(tabela.rows):
+                texto_linha = " ".join(c.text for c in linha.cells).casefold()
+                if "participante" in texto_linha and "assinatura" in texto_linha:
+                    linhas_da_tabela = [
+                        r for r in tabela.rows[indice + 1:] if len(r.cells) >= 10
+                    ]
+                    if linhas_da_tabela:
+                        tabelas_com_participantes.append(
+                            (tabela, linhas_da_tabela)
+                        )
+                    break
+
+        if not tabelas_com_participantes:
+            raise ValueError(
+                "Não foi possível identificar uma linha-base de participantes no modelo."
+            )
+
+        tabela_final, linhas_finais = tabelas_com_participantes[-1]
+        linha_base = linhas_finais[-1]
+        quantidade_extra = len(participantes) - len(linhas_participantes)
+
+        for _ in range(quantidade_extra):
+            nova_linha_xml = deepcopy(linha_base._tr)
+            tabela_final._tbl.append(nova_linha_xml)
+            linhas_participantes.append(tabela_final.rows[-1])
 
     # Limpa as linhas de exemplo e preenche apenas as presenças confirmadas.
     for numero, linha in enumerate(linhas_participantes, start=1):
