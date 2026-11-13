@@ -1600,7 +1600,11 @@ elif menu == "Afastamentos":
             for _, r in ativos.sort_values("nome").iterrows()
         }
         with st.form("form_novo_afastamento"):
-            colaborador_afastado = st.selectbox("Colaborador", list(opcoes))
+            colaboradores_afastados = st.multiselect(
+                "Colaborador(es)",
+                list(opcoes),
+                help="É possível selecionar uma pessoa ou vários colaboradores para registrar o mesmo período de afastamento.",
+            )
             tipo_afastamento = st.selectbox("Tipo de afastamento", tipos_afastamento)
             tipo_personalizado = st.text_input("Se selecionou 'Outro afastamento legal', especifique")
             col_inicio, col_fim = st.columns(2)
@@ -1612,20 +1616,23 @@ elif menu == "Afastamentos":
             salvar_afastamento = st.form_submit_button("Registrar afastamento")
         if salvar_afastamento:
             tipo_final = tipo_personalizado.strip() if tipo_afastamento == "Outro afastamento legal" else tipo_afastamento
-            if fim_afastamento < inicio_afastamento:
+            if not colaboradores_afastados:
+                st.error("Selecione pelo menos um colaborador.")
+            elif fim_afastamento < inicio_afastamento:
                 st.error("A data final não pode ser anterior à data inicial.")
             elif not tipo_final:
                 st.error("Informe o tipo de afastamento.")
             else:
                 try:
                     with conectar() as conn:
-                        conn.execute(
-                            """INSERT INTO afastamentos
-                               (colaborador_id, tipo, data_inicio, data_fim, observacoes, ativo)
-                               VALUES (?, ?, ?, ?, ?, 1)""",
-                            (opcoes[colaborador_afastado], tipo_final, inicio_afastamento.isoformat(), fim_afastamento.isoformat(), observacoes_afastamento.strip()),
-                        )
-                    st.success("Afastamento registrado.")
+                        for colaborador_escolhido in colaboradores_afastados:
+                            conn.execute(
+                                """INSERT INTO afastamentos
+                                   (colaborador_id, tipo, data_inicio, data_fim, observacoes, ativo)
+                                   VALUES (?, ?, ?, ?, ?, 1)""",
+                                (opcoes[colaborador_escolhido], tipo_final, inicio_afastamento.isoformat(), fim_afastamento.isoformat(), observacoes_afastamento.strip()),
+                            )
+                    st.success(f"Afastamento registrado para {len(colaboradores_afastados)} colaborador(es).")
                     st.rerun()
                 except Exception:
                     st.error("Não foi possível registrar o afastamento. Verifique os logs.")
