@@ -835,7 +835,15 @@ def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
 
     internos = consultar(
         """
-        SELECT c.nome, c.cargo, '' AS instituicao, 'Interno' AS vinculo
+        SELECT
+            c.nome,
+            c.cargo,
+            'UCM/MI' AS instituicao,
+            CASE
+                WHEN UPPER(TRIM(COALESCE(c.cargo, ''))) LIKE '%RJU'
+                    THEN 'UFU'
+                ELSE 'EBSERH'
+            END AS vinculo
         FROM presencas p
         JOIN colaboradores c ON c.id = p.colaborador_id
         WHERE p.treinamento_id = ? AND p.presente = 1 AND c.ativo = 1
@@ -845,7 +853,11 @@ def gerar_lista_presenca_word(treinamento_id, titulo_treinamento):
     )
     externos = consultar(
         """
-        SELECT pe.nome, '' AS cargo, pe.instituicao, 'Externo' AS vinculo
+        SELECT
+            pe.nome,
+            '' AS cargo,
+            'UFU' AS instituicao,
+            'UFU' AS vinculo
         FROM presencas_externas px
         JOIN participantes_externos pe
             ON pe.id = px.participante_externo_id
